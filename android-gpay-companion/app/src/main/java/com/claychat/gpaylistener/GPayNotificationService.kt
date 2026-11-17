@@ -15,10 +15,6 @@ import java.net.URL
 class GPayNotificationService : NotificationListenerService() {
 
     private val TAG = "GPayListener"
-
-    // Supported Google Pay Packages
-    // com.google.android.apps.nbu.paisa.merchant = Google Pay for Business
-    // com.google.android.apps.nbu.paisa.user = Personal Google Pay
     private val GPAY_BUSINESS_PACKAGE = "com.google.android.apps.nbu.paisa.merchant"
     private val GPAY_PERSONAL_PACKAGE = "com.google.android.apps.nbu.paisa.user"
 
@@ -35,8 +31,6 @@ class GPayNotificationService : NotificationListenerService() {
 
         Log.d(TAG, "GPay Notification from $pkg: Title='$title' | Text='$text'")
 
-        // Only process notifications indicating incoming money
-        // E.g.: "Received ₹1.00", "Payment of ₹1 received"
         val fullContent = "$title $text".lowercase()
         if (fullContent.contains("received") || fullContent.contains("credited") || fullContent.contains("paid you") || fullContent.contains("₹")) {
             sendWebhookToServer(title, text)

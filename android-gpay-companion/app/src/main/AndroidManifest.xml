@@ -7,7 +7,6 @@
 
     <application
         android:allowBackup="true"
-        android:icon="@mipmap/ic_launcher"
         android:label="Clay GPay Listener"
         android:theme="@android:style/Theme.DeviceDefault.Light">
 
@@ -20,7 +19,6 @@
             </intent-filter>
         </activity>
 
-        <!-- Notification Listener Service for Google Pay for Business -->
         <service
             android:name=".GPayNotificationService"
             android:label="Clay GPay Notification Listener"
