@@ -91,6 +91,53 @@ body {
   gap: 14px;
 }
 
+/* Google Auth Header Section */
+.google-auth-box {
+  display: flex;
+  align-items: center;
+}
+
+.user-profile-badge {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  background: var(--bg-secondary);
+  border: 1px solid var(--border);
+  padding: 4px 10px 4px 6px;
+  border-radius: 20px;
+}
+
+.avatar-circle {
+  width: 26px;
+  height: 26px;
+  border-radius: 50%;
+  object-fit: cover;
+  border: 1px solid var(--primary);
+}
+
+.user-name-text {
+  font-size: 0.82rem;
+  font-weight: 600;
+  max-width: 120px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.logout-mini-btn {
+  background: none;
+  border: none;
+  color: var(--text-muted);
+  cursor: pointer;
+  font-size: 0.75rem;
+  margin-left: 2px;
+  padding: 2px 4px;
+}
+
+.logout-mini-btn:hover {
+  color: var(--danger);
+}
+
 .gender-bar {
   display: flex;
   align-items: center;

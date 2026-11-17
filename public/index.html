@@ -6,6 +6,8 @@
   <title>Clay Chat - Random Video & Text Chat</title>
   <link rel="stylesheet" href="style.css">
   <link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700&display=swap" rel="stylesheet">
+  <!-- Google Identity Services -->
+  <script src="https://accounts.google.com/gsi/client" async defer></script>
   <!-- Socket.io -->
   <script src="/socket.io/socket.io.js"></script>
 </head>
@@ -25,6 +27,16 @@
       </div>
 
       <div class="header-controls">
+        <!-- Google Sign-In Section -->
+        <div class="google-auth-box">
+          <div id="googleSignInBtn"></div>
+          <div id="userProfileBadge" class="user-profile-badge" style="display: none;">
+            <img id="userAvatarImg" src="" alt="Avatar" class="avatar-circle" />
+            <span id="userProfileName" class="user-name-text"></span>
+            <button id="logoutBtn" class="logout-mini-btn" title="Sign Out">✕</button>
+          </div>
+        </div>
+
         <!-- Gender Filter bar -->
         <div class="gender-bar">
           <div class="filter-group">

@@ -558,5 +558,114 @@ if (localStorage.getItem('stranger_is_vip') === 'true') {
   activateVip();
 }
 
+// Google Authentication
+let currentGoogleUser = null;
+const googleSignInBtn = document.getElementById('googleSignInBtn');
+const userProfileBadge = document.getElementById('userProfileBadge');
+const userAvatarImg = document.getElementById('userAvatarImg');
+const userProfileName = document.getElementById('userProfileName');
+const logoutBtn = document.getElementById('logoutBtn');
+
+function parseJwt(token) {
+  try {
+    const base64Url = token.split('.')[1];
+    const base64 = base64Url.replace(/-/g, '+').replace(/_/g, '/');
+    const jsonPayload = decodeURIComponent(atob(base64).split('').map(function(c) {
+      return '%' + ('00' + c.charCodeAt(0).toString(16)).slice(-2);
+    }).join(''));
+    return JSON.parse(jsonPayload);
+  } catch(e) {
+    return null;
+  }
+}
+
+async function initGoogleAuth() {
+  try {
+    const configRes = await fetch('/api/config');
+    const config = await configRes.json();
+    const clientId = config.googleClientId;
+
+    if (window.google && clientId && googleSignInBtn) {
+      google.accounts.id.initialize({
+        client_id: clientId,
+        callback: handleGoogleLoginResponse,
+        auto_select: false
+      });
+
+      google.accounts.id.renderButton(
+        googleSignInBtn,
+        { theme: 'outline', size: 'medium', shape: 'pill', text: 'signin_with' }
+      );
+    }
+  } catch (err) {
+    console.warn('Google Auth init error:', err);
+  }
+}
+
+async function handleGoogleLoginResponse(response) {
+  const profile = parseJwt(response.credential);
+  if (!profile) return;
+
+  try {
+    const res = await fetch('/api/auth/google-login', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        email: profile.email,
+        name: profile.name,
+        picture: profile.picture,
+        sub: profile.sub,
+        socketId: socket.id
+      })
+    });
+    const data = await res.json();
+    if (data.success && data.user) {
+      applyUserProfile(data.user);
+    }
+  } catch (err) {
+    console.error('Google login backend sync failed:', err);
+  }
+}
+
+function applyUserProfile(user) {
+  currentGoogleUser = user;
+  localStorage.setItem('clay_google_user', JSON.stringify(user));
+  if (googleSignInBtn) googleSignInBtn.style.display = 'none';
+  if (userProfileBadge) userProfileBadge.style.display = 'flex';
+  if (userAvatarImg) userAvatarImg.src = user.picture || 'https://www.gravatar.com/avatar/?d=mp';
+  if (userProfileName) userProfileName.textContent = user.name || user.email;
+
+  if (user.isVip) {
+    activateVip();
+  }
+  appendSystemMessage(`👋 Signed in as ${user.name || user.email}!`);
+}
+
+if (logoutBtn) {
+  logoutBtn.addEventListener('click', () => {
+    localStorage.removeItem('clay_google_user');
+    currentGoogleUser = null;
+    if (googleSignInBtn) googleSignInBtn.style.display = 'block';
+    if (userProfileBadge) userProfileBadge.style.display = 'none';
+    if (window.google) {
+      google.accounts.id.disableAutoSelect();
+    }
+    appendSystemMessage('Signed out of Google.');
+  });
+}
+
+// Restore saved user if any
+const savedGoogleUser = localStorage.getItem('clay_google_user');
+if (savedGoogleUser) {
+  try {
+    applyUserProfile(JSON.parse(savedGoogleUser));
+  } catch(e){}
+}
+
+// Call initGoogleAuth when window loads
+window.addEventListener('load', () => {
+  setTimeout(initGoogleAuth, 600);
+});
+
 // Start Media on page load
 initMedia();

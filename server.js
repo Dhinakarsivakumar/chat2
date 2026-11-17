@@ -97,6 +97,35 @@ function verifyWebhookSignature(payload, secret, signature) {
 app.use(express.json());
 app.use(express.static(path.join(__dirname, 'public')));
 
+const GOOGLE_CLIENT_ID = process.env.GOOGLE_CLIENT_ID || '413973614482-compute@developer.gserviceaccount.com';
+
+// Persistent user database (JSON file)
+const USERS_FILE_PATH = path.join(__dirname, 'users.json');
+let registeredUsers = new Map(); // email -> { email, name, picture, isVip, createdAt }
+
+function loadUsers() {
+  try {
+    if (fs.existsSync(USERS_FILE_PATH)) {
+      const data = JSON.parse(fs.readFileSync(USERS_FILE_PATH, 'utf-8'));
+      registeredUsers = new Map(Object.entries(data));
+      console.log(`[Auth] Loaded ${registeredUsers.size} registered users.`);
+    }
+  } catch (err) {
+    console.error('[Auth] Failed to load users.json:', err);
+  }
+}
+
+function saveUsers() {
+  try {
+    const obj = Object.fromEntries(registeredUsers);
+    fs.writeFileSync(USERS_FILE_PATH, JSON.stringify(obj, null, 2));
+  } catch (err) {
+    console.error('[Auth] Failed to save users.json:', err);
+  }
+}
+
+loadUsers();
+
 // In-Memory State
 // socketId -> { id, userId, myGender, lookingFor, isVip, roomId, partnerId, blockedUsers: Set, reportCount: 0 }
 const activeUsers = new Map();
@@ -119,6 +148,12 @@ function activateUserVip(userId) {
   for (const [sId, user] of activeUsers.entries()) {
     if (user.userId === userId) {
       user.isVip = true;
+      if (user.email && registeredUsers.has(user.email)) {
+        const u = registeredUsers.get(user.email);
+        u.isVip = true;
+        registeredUsers.set(user.email, u);
+        saveUsers();
+      }
       const socket = io.sockets.sockets.get(sId);
       if (socket) {
         socket.emit('vip-activated', {
@@ -130,13 +165,63 @@ function activateUserVip(userId) {
   }
 }
 
+// Google Login Endpoint
+app.post('/api/auth/google-login', (req, res) => {
+  const { email, name, picture, sub, socketId } = req.body;
+  if (!email) {
+    return res.status(400).json({ error: 'Email is required' });
+  }
+
+  let user = registeredUsers.get(email);
+  if (!user) {
+    user = {
+      email,
+      name: name || email.split('@')[0],
+      picture: picture || '',
+      googleId: sub || '',
+      isVip: false,
+      createdAt: new Date().toISOString()
+    };
+    registeredUsers.set(email, user);
+  } else {
+    // Update profile info
+    if (name) user.name = name;
+    if (picture) user.picture = picture;
+    user.lastLogin = new Date().toISOString();
+  }
+  saveUsers();
+
+  // If client provided active socketId, sync the profile
+  if (socketId && activeUsers.has(socketId)) {
+    const active = activeUsers.get(socketId);
+    active.email = email;
+    active.userName = user.name;
+    if (user.isVip) {
+      active.isVip = true;
+    }
+  }
+
+  console.log(`[Google Auth] User logged in: ${email} (VIP: ${user.isVip})`);
+
+  res.json({
+    success: true,
+    user: {
+      email: user.email,
+      name: user.name,
+      picture: user.picture,
+      isVip: user.isVip
+    }
+  });
+});
+
 // REST Endpoints
 app.get('/api/config', (req, res) => {
   res.json({
     uropayConfigured: Boolean(UROPAY_API_KEY && UROPAY_SECRET),
     vpa: UROPAY_VPA,
     vpaName: UROPAY_VPA_NAME,
-    turnConfigured: !!process.env.TURN_SERVER_URL
+    turnConfigured: !!process.env.TURN_SERVER_URL,
+    googleClientId: GOOGLE_CLIENT_ID
   });
 });
 
