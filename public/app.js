@@ -566,6 +566,37 @@ const userAvatarImg = document.getElementById('userAvatarImg');
 const userProfileName = document.getElementById('userProfileName');
 const logoutBtn = document.getElementById('logoutBtn');
 
+// Login Modal Elements
+const loginModal = document.getElementById('loginModal');
+const closeLoginModalBtn = document.getElementById('closeLoginModalBtn');
+const googleCustomBtn = document.getElementById('googleCustomBtn');
+const guestContinueBtn = document.getElementById('guestContinueBtn');
+
+if (closeLoginModalBtn) {
+  closeLoginModalBtn.addEventListener('click', () => {
+    loginModal.style.display = 'none';
+  });
+}
+
+if (guestContinueBtn) {
+  guestContinueBtn.addEventListener('click', () => {
+    loginModal.style.display = 'none';
+  });
+}
+
+if (googleCustomBtn) {
+  googleCustomBtn.addEventListener('click', () => {
+    if (window.google) {
+      google.accounts.id.prompt((notification) => {
+        if (notification.isNotDisplayed() || notification.isSkippedMoment()) {
+          // If One-Tap is blocked by browser, trigger standard Google OAuth flow or simulation
+          console.log('One-tap dismissed or blocked, prompt alternative');
+        }
+      });
+    }
+  });
+}
+
 function parseJwt(token) {
   try {
     const base64Url = token.split('.')[1];
@@ -585,17 +616,28 @@ async function initGoogleAuth() {
     const config = await configRes.json();
     const clientId = config.googleClientId;
 
-    if (window.google && clientId && googleSignInBtn) {
+    if (window.google && clientId) {
       google.accounts.id.initialize({
         client_id: clientId,
         callback: handleGoogleLoginResponse,
         auto_select: false
       });
 
-      google.accounts.id.renderButton(
-        googleSignInBtn,
-        { theme: 'outline', size: 'medium', shape: 'pill', text: 'signin_with' }
-      );
+      if (googleSignInBtn) {
+        google.accounts.id.renderButton(
+          googleSignInBtn,
+          { theme: 'outline', size: 'small', shape: 'pill', text: 'signin' }
+        );
+      }
+
+      const modalBtn = document.getElementById('googleModalSignInBtn');
+      if (modalBtn) {
+        google.accounts.id.renderButton(
+          modalBtn,
+          { theme: 'filled_blue', size: 'large', shape: 'pill', width: 280, text: 'continue_with' }
+        );
+        if (googleCustomBtn) googleCustomBtn.style.display = 'none';
+      }
     }
   } catch (err) {
     console.warn('Google Auth init error:', err);
@@ -621,6 +663,7 @@ async function handleGoogleLoginResponse(response) {
     const data = await res.json();
     if (data.success && data.user) {
       applyUserProfile(data.user);
+      if (loginModal) loginModal.style.display = 'none';
     }
   } catch (err) {
     console.error('Google login backend sync failed:', err);
@@ -660,6 +703,13 @@ if (savedGoogleUser) {
   try {
     applyUserProfile(JSON.parse(savedGoogleUser));
   } catch(e){}
+} else {
+  // Show login modal on first visit for guest/login option
+  setTimeout(() => {
+    if (!currentGoogleUser && loginModal) {
+      loginModal.style.display = 'flex';
+    }
+  }, 1000);
 }
 
 // Call initGoogleAuth when window loads
