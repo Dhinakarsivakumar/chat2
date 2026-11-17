@@ -377,6 +377,61 @@ app.post('/api/uropay/webhook', (req, res) => {
   res.status(200).json({ received: true });
 });
 
+// 5. Custom Google Pay for Business Notification Webhook
+const GPAY_WEBHOOK_SECRET = process.env.GPAY_WEBHOOK_SECRET || 'claychat_gpay_secret_2026';
+
+app.post('/api/gpay/webhook', (req, res) => {
+  const authHeader = req.headers['x-webhook-secret'];
+  if (authHeader && authHeader !== GPAY_WEBHOOK_SECRET) {
+    return res.status(401).json({ error: 'Unauthorized webhook request' });
+  }
+
+  const { title = '', text = '', amount = null, payer = '' } = req.body;
+  console.log(`[GPay Business Notification] Received: "${title}" - "${text}"`);
+
+  // Extract amount using robust regex
+  let detectedAmount = amount;
+  if (!detectedAmount) {
+    const combined = `${title} ${text}`;
+    const match = combined.match(/(?:₹|Rs\.?|inr)?\s*([0-9]+(?:\.[0-9]{1,2})?)\s*(?:received|credited|from)?/i);
+    if (match) {
+      detectedAmount = parseFloat(match[1]);
+    }
+  }
+
+  console.log(`[GPay Business] Parsed Amount: ₹${detectedAmount}`);
+
+  // Find the most recently active waiting or pending user
+  let activated = false;
+  // Check active orders
+  for (const [orderId, order] of orders.entries()) {
+    if (order.status === 'CREATED' || order.status === 'UTR_SUBMITTED') {
+      order.status = 'COMPLETED';
+      activateUserVip(order.userId);
+      activated = true;
+      console.log(`[GPay Business] Auto-activated VIP for user ${order.userId} on order ${orderId}`);
+      break;
+    }
+  }
+
+  // If no explicit order in map, activate the most recently connected active user
+  if (!activated && activeUsers.size > 0) {
+    const lastUser = Array.from(activeUsers.values()).reverse().find(u => !u.isVip);
+    if (lastUser) {
+      activateUserVip(lastUser.userId);
+      console.log(`[GPay Business] Auto-activated VIP for active user ${lastUser.userId}`);
+      activated = true;
+    }
+  }
+
+  res.status(200).json({
+    success: true,
+    message: 'GPay notification processed successfully',
+    activated,
+    detectedAmount
+  });
+});
+
 // Moderation Log Endpoint
 app.get('/api/moderation/reports', (req, res) => {
   if (fs.existsSync(REPORTS_LOG_PATH)) {
