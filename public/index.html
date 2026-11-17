@@ -1,0 +1,239 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Clay Chat - Random Video & Text Chat</title>
+  <link rel="stylesheet" href="style.css">
+  <link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700&display=swap" rel="stylesheet">
+  <!-- Socket.io -->
+  <script src="/socket.io/socket.io.js"></script>
+</head>
+<body>
+  <div class="app-container">
+    <!-- Header -->
+    <header class="app-header">
+      <div class="header-left">
+        <div class="logo">
+          <span class="logo-icon">💬</span>
+          <span class="logo-text">Clay<strong>Chat</strong></span>
+        </div>
+        <div class="online-pill">
+          <span class="online-dot"></span>
+          <span id="onlineCount">1</span> Online
+        </div>
+      </div>
+
+      <div class="header-controls">
+        <!-- Gender Filter bar -->
+        <div class="gender-bar">
+          <div class="filter-group">
+            <label>I am:</label>
+            <select id="myGenderSelect">
+              <option value="male">Male ♂</option>
+              <option value="female">Female ♀</option>
+              <option value="other">Other ⚧</option>
+            </select>
+          </div>
+
+          <div class="filter-group">
+            <label>Looking for:</label>
+            <select id="lookingForSelect">
+              <option value="all">Everyone (Free)</option>
+              <option value="female">Female ♀ (VIP ⭐)</option>
+              <option value="male">Male ♂ (VIP ⭐)</option>
+            </select>
+          </div>
+        </div>
+
+        <button id="vipBadgeBtn" class="vip-btn">
+          <span class="vip-icon">👑</span>
+          <span id="vipBtnText">Upgrade VIP</span>
+        </button>
+      </div>
+    </header>
+
+    <!-- Main Workspace -->
+    <main class="main-content">
+      <!-- Left: Video Feeds -->
+      <section class="video-container">
+        <!-- Remote Stranger Video -->
+        <div class="remote-video-card" id="remoteVideoCard">
+          <video id="remoteVideo" autoplay playsinline></video>
+          <div class="video-overlay" id="videoOverlay">
+            <div class="overlay-content">
+              <div class="pulse-loader" id="loaderAnimation"></div>
+              <h3 id="overlayStatus">Click "Start Chat" to connect with a stranger</h3>
+              <p id="overlaySub">Safe, encrypted 1-on-1 peer-to-peer live chat</p>
+            </div>
+          </div>
+          <div class="partner-badge" id="partnerBadge" style="display: none;">
+            <span>Stranger</span>
+            <span class="partner-gender" id="partnerGenderTag"></span>
+          </div>
+        </div>
+
+        <!-- Local Self Video (PiP) -->
+        <div class="local-video-card">
+          <video id="localVideo" autoplay playsinline muted></video>
+          <div class="local-label">You</div>
+          <div class="media-controls">
+            <button id="toggleCamBtn" title="Toggle Camera" class="icon-btn">📹</button>
+            <button id="toggleMicBtn" title="Toggle Mic" class="icon-btn">🎙️</button>
+          </div>
+        </div>
+      </section>
+
+      <!-- Right: Real-time Text Chat -->
+      <section class="chat-container">
+        <div class="chat-header">
+          <div class="chat-status-info">
+            <span class="status-indicator" id="chatStatusDot"></span>
+            <span id="chatStatusText">Disconnected</span>
+          </div>
+
+          <div class="safety-actions" id="safetyActions" style="display: none;">
+            <button id="blockBtn" class="danger-btn sm" title="Block this stranger">🚫 Block</button>
+            <button id="reportBtn" class="warning-btn sm" title="Report inappropriate behavior">🚨 Report</button>
+          </div>
+        </div>
+
+        <!-- Messages stream -->
+        <div class="messages-container" id="messagesContainer">
+          <div class="system-message welcome">
+            <p>👋 Welcome to <strong>Clay Chat</strong>!</p>
+            <p>Connect with people worldwide. Remember to stay safe, respectful, and adhere to community guidelines.</p>
+          </div>
+        </div>
+
+        <!-- Typing notification -->
+        <div class="typing-indicator" id="typingIndicator" style="display: none;">
+          <span>Stranger is typing...</span>
+        </div>
+
+        <!-- Chat Input Form -->
+        <form class="chat-input-form" id="chatForm">
+          <input 
+            type="text" 
+            id="messageInput" 
+            placeholder="Type a message or press Enter..." 
+            autocomplete="off" 
+            disabled
+          />
+          <button type="submit" id="sendBtn" class="send-btn" disabled>
+            <span>Send</span>
+          </button>
+        </form>
+
+        <!-- Bottom Action Bar -->
+        <div class="action-footer">
+          <button id="startNextBtn" class="primary-btn lg">
+            <span id="startBtnText">Start Chat</span>
+            <kbd class="shortcut-tag">Esc</kbd>
+          </button>
+          <button id="stopBtn" class="secondary-btn" style="display: none;">Stop</button>
+        </div>
+      </section>
+    </main>
+  </div>
+
+  <!-- Report Modal -->
+  <div class="modal-backdrop" id="reportModal" style="display: none;">
+    <div class="modal-box">
+      <h3>🚨 Report Stranger</h3>
+      <p class="modal-desc">Help keep Clay Chat safe. Why are you reporting this user?</p>
+      
+      <div class="report-options">
+        <label><input type="radio" name="reportReason" value="Inappropriate nudity or NSFW content" checked> Inappropriate nudity / NSFW</label>
+        <label><input type="radio" name="reportReason" value="Harassment, abuse or hate speech"> Harassment or hate speech</label>
+        <label><input type="radio" name="reportReason" value="Spam, advertising or bot"> Spam or bot account</label>
+        <label><input type="radio" name="reportReason" value="Underage or safety concern"> Underage concern</label>
+      </div>
+
+      <div class="modal-actions">
+        <button id="cancelReportBtn" class="secondary-btn">Cancel</button>
+        <button id="confirmReportBtn" class="danger-btn">Submit Report & Block</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- VIP Subscription / UPI Payment Modal -->
+  <div class="modal-backdrop" id="vipModal" style="display: none;">
+    <div class="modal-box vip-modal">
+      <div class="vip-header">
+        <span class="vip-crown-large">👑</span>
+        <h2>Unlock VIP Membership</h2>
+        <p>Instant UPI Payment powered by UroPay</p>
+      </div>
+
+      <!-- Stage 1: Plans & Perks -->
+      <div id="vipPlanStep">
+        <div class="vip-perks">
+          <div class="perk-item">
+            <span class="perk-icon">✨</span>
+            <div>
+              <strong>Gender Match Filtering</strong>
+              <p>Filter specifically to match with Female or Male users.</p>
+            </div>
+          </div>
+          <div class="perk-item">
+            <span class="perk-icon">⚡</span>
+            <div>
+              <strong>Instant Priority Queue</strong>
+              <p>Zero wait time matching with active strangers.</p>
+            </div>
+          </div>
+          <div class="perk-item">
+            <span class="perk-icon">🛡️</span>
+            <div>
+              <strong>VIP Golden Badge</strong>
+              <p>Stand out with verified status.</p>
+            </div>
+          </div>
+        </div>
+
+        <div class="pricing-card">
+          <span class="price-val">₹1</span>
+          <span class="price-period">/ month (UPI Instant Payment)</span>
+        </div>
+
+        <div class="modal-actions">
+          <button id="closeVipModalBtn" class="secondary-btn">Maybe Later</button>
+          <button id="startUpiPayBtn" class="vip-submit-btn">⚡ Pay with UPI / QR</button>
+        </div>
+      </div>
+
+      <!-- Stage 2: UroPay UPI QR & UTR Verification -->
+      <div id="vipQrStep" style="display: none;">
+        <div class="upi-pay-card">
+          <div class="qr-wrapper">
+            <img id="upiQrImage" src="" alt="UPI QR Code" />
+          </div>
+
+          <div class="upi-details">
+            <div class="amount-tag">Amount: <strong id="upiAmountText">₹1.00</strong></div>
+            <p class="upi-instruction">Scan with Google Pay, PhonePe, Paytm, or BHIM</p>
+            <a id="upiIntentBtn" href="#" class="upi-intent-link" target="_blank">📱 Pay directly in UPI App</a>
+          </div>
+
+          <!-- UTR Submission -->
+          <div class="utr-section">
+            <label for="utrInput">Enter 12-Digit UPI Reference / UTR Number:</label>
+            <div class="utr-input-group">
+              <input type="text" id="utrInput" placeholder="e.g. 430686551035" maxlength="16" />
+              <button id="submitUtrBtn" class="submit-utr-btn">Verify UTR</button>
+            </div>
+            <p class="utr-help" id="utrStatusMsg">UTR is found in your UPI app payment receipt.</p>
+          </div>
+
+          <div class="modal-actions" style="margin-top: 16px;">
+            <button id="backToPlansBtn" class="secondary-btn">Back</button>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <script src="app.js"></script>
+</body>
+</html>
