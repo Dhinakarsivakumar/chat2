@@ -5,6 +5,7 @@ const { Server } = require('socket.io');
 const path = require('path');
 const fs = require('fs');
 const crypto = require('crypto');
+const QRCode = require('qrcode');
 
 const app = express();
 const server = http.createServer(app);
@@ -192,6 +193,20 @@ app.post('/api/uropay/create-order', async (req, res) => {
     const data = await response.json();
 
     if (data.status === 'success' && data.data) {
+      // Ensure the QR code and UPI string strictly point to the user's own VPA and Name
+      const vpaToUse = UROPAY_VPA || 'sdhinakar6-5@okaxis';
+      const vpaNameToUse = UROPAY_VPA_NAME || 'Dhinakar Sivakumar';
+      const amountInRupees = (amount / 100).toFixed(2);
+      
+      const strictlyVerifiedUpi = `upi://pay?pa=${vpaToUse}&pn=${encodeURIComponent(vpaNameToUse)}&am=${amountInRupees}&cu=INR&tn=${encodeURIComponent('Clay Chat VIP')}&tr=${data.data.uroPayOrderId}`;
+      
+      // Generate guaranteed accurate QR Code directly from the verified UPI string
+      const guaranteedQrCode = await QRCode.toDataURL(strictlyVerifiedUpi, {
+        errorCorrectionLevel: 'H',
+        margin: 1,
+        width: 320
+      });
+
       orders.set(data.data.uroPayOrderId, {
         uroPayOrderId: data.data.uroPayOrderId,
         merchantOrderId,
@@ -199,7 +214,18 @@ app.post('/api/uropay/create-order', async (req, res) => {
         amount,
         status: data.data.orderStatus || 'CREATED'
       });
-      return res.json({ success: true, data: data.data });
+
+      return res.json({ 
+        success: true, 
+        data: {
+          ...data.data,
+          upiString: strictlyVerifiedUpi,
+          qrCode: guaranteedQrCode,
+          vpa: vpaToUse,
+          vpaName: vpaNameToUse,
+          amountInRupees: amountInRupees
+        } 
+      });
     }
 
     console.error('[UroPay] Error generating order:', data);

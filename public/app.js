@@ -449,12 +449,17 @@ startUpiPayBtn.addEventListener('click', async () => {
 
     const result = await res.json();
     if (result.success && result.data) {
-      const { qrCode, upiString, amountInRupees, uroPayOrderId } = result.data;
+      const { qrCode, upiString, amountInRupees, uroPayOrderId, vpa, vpaName } = result.data;
       currentUroPayOrderId = uroPayOrderId;
 
       upiQrImage.src = qrCode;
       upiAmountText.textContent = `₹${amountInRupees}`;
       upiIntentBtn.href = upiString;
+
+      const payeeEl = document.getElementById('upiPayeeText');
+      if (payeeEl && vpa) {
+        payeeEl.textContent = `${vpaName || 'Dhinakar Sivakumar'} (${vpa})`;
+      }
 
       vipPlanStep.style.display = 'none';
       vipQrStep.style.display = 'block';
