@@ -2,29 +2,45 @@
 <html lang="en">
 <head>
   <meta charset="UTF-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>Clay Chat - Random Video & Text Chat</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+  <title>Clay Chat - Stranger Video & Text Chat</title>
   <link rel="stylesheet" href="style.css">
-  <link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700&display=swap" rel="stylesheet">
+  <link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700;800&display=swap" rel="stylesheet">
   <!-- Google Identity Services -->
   <script src="https://accounts.google.com/gsi/client" async defer></script>
   <!-- Socket.io -->
   <script src="/socket.io/socket.io.js"></script>
 </head>
 <body>
-  <div class="app-container">
+  <div class="app-container" id="appContainer">
     <!-- Header -->
     <header class="app-header">
-      <div class="header-left">
-        <div class="logo">
-          <span class="logo-icon">💬</span>
-          <span class="logo-text">Clay<strong>Chat</strong></span>
+      <!-- Row 1: Brand, Mode Switcher & User Profile -->
+      <div class="header-top-row">
+        <div class="header-left">
+          <div class="logo">
+            <span class="logo-icon">💬</span>
+            <span class="logo-text">Clay<strong>Chat</strong></span>
+          </div>
+          <div class="online-pill">
+            <span class="online-dot"></span>
+            <span id="onlineCount">1</span> Online
+          </div>
         </div>
-        <div class="online-pill">
-          <span class="online-dot"></span>
-          <span id="onlineCount">1</span> Online
+
+        <!-- Chat Mode Switcher: Video vs Text -->
+        <div class="mode-switcher-container">
+          <button type="button" class="mode-pill active" id="modeVideoBtn" data-mode="video">
+            <span class="mode-icon">📹</span>
+            <span class="mode-label">Video</span>
+          </button>
+          <button type="button" class="mode-pill" id="modeTextBtn" data-mode="text">
+            <span class="mode-icon">💬</span>
+            <span class="mode-label">Text Only</span>
+          </button>
         </div>
-        <!-- Google Sign-In in Top Row -->
+
+        <!-- Google User Profile / Login -->
         <div class="google-auth-box">
           <div id="googleSignInBtn"></div>
           <div id="userProfileBadge" class="user-profile-badge" style="display: none;">
@@ -35,26 +51,35 @@
         </div>
       </div>
 
-      <div class="header-controls">
-        <!-- Gender Filter bar -->
-        <div class="gender-bar">
+      <!-- Row 2: Matchmaking Filters (Gender, Age, Interests & VIP) -->
+      <div class="header-controls-row">
+        <div class="filters-wrap">
+          <!-- Gender -->
           <div class="filter-group">
-            <label>I am:</label>
-            <select id="myGenderSelect">
-              <option value="male">Male ♂</option>
-              <option value="female">Female ♀</option>
-              <option value="other">Other ⚧</option>
-            </select>
-          </div>
-
-          <div class="filter-group">
-            <label>Looking for:</label>
-            <select id="lookingForSelect">
+            <label>Gender:</label>
+            <select id="lookingForSelect" class="filter-select">
               <option value="all">Everyone (Free)</option>
               <option value="female">Female ♀ (VIP ⭐)</option>
               <option value="male">Male ♂ (VIP ⭐)</option>
             </select>
           </div>
+
+          <!-- Age Filter -->
+          <div class="filter-group">
+            <label>Age:</label>
+            <select id="agePreferenceSelect" class="filter-select">
+              <option value="all">All Ages</option>
+              <option value="18-24">18 - 24 (VIP ⭐)</option>
+              <option value="25-34">25 - 34 (VIP ⭐)</option>
+              <option value="35+">35+ (VIP ⭐)</option>
+            </select>
+          </div>
+
+          <!-- Interests Quick Button -->
+          <button type="button" id="openInterestsModalBtn" class="filter-btn-pill">
+            <span>🏷️ Interests</span>
+            <span id="activeInterestsCount" class="chip-count">0</span>
+          </button>
         </div>
 
         <button id="vipBadgeBtn" class="vip-btn">
@@ -64,74 +89,29 @@
       </div>
     </header>
 
-    <!-- Google Login Banner / Modal -->
-    <div class="login-modal-backdrop" id="loginModal" style="display: none;">
-      <div class="login-card">
-        <button class="close-login-modal" id="closeLoginModalBtn">✕</button>
-        <div class="login-brand">
-          <span class="login-logo-icon">💬</span>
-          <h2>Welcome to <strong>Clay Chat</strong></h2>
-          <p class="login-subtitle">Connect instantly with random people around the world</p>
-        </div>
-
-        <div class="login-features">
-          <div class="feature-bullet">
-            <span class="f-icon">🔒</span>
-            <span>Anonymous & Encrypted 1-on-1 Video Chat</span>
-          </div>
-          <div class="feature-bullet">
-            <span class="f-icon">👑</span>
-            <span>Save your VIP perks and gender filters</span>
-          </div>
-          <div class="feature-bullet">
-            <span class="f-icon">⚡</span>
-            <span>Access your account from any phone or PC</span>
-          </div>
-        </div>
-
-        <div class="google-btn-wrapper">
-          <div id="googleModalSignInBtn"></div>
-          <button id="googleCustomBtn" class="google-custom-btn">
-            <svg class="google-svg" viewBox="0 0 24 24">
-              <path fill="#4285F4" d="M22.56 12.25c0-.78-.07-1.53-.2-2.25H12v4.26h5.92c-.26 1.37-1.04 2.53-2.21 3.31v2.77h3.57c2.08-1.92 3.28-4.74 3.28-8.09z"/>
-              <path fill="#34A853" d="M12 23c2.97 0 5.46-.98 7.28-2.66l-3.57-2.77c-.98.66-2.23 1.06-3.71 1.06-2.86 0-5.29-1.93-6.16-4.53H2.18v2.84C3.99 20.53 7.7 23 12 23z"/>
-              <path fill="#FBBC05" d="M5.84 14.09c-.22-.66-.35-1.36-.35-2.09s.13-1.43.35-2.09V7.06H2.18C1.43 8.55 1 10.22 1 12s.43 3.45 1.18 4.94l2.85-2.22.81-.63z"/>
-              <path fill="#EA4335" d="M12 5.38c1.62 0 3.06.56 4.21 1.64l3.15-3.15C17.45 2.09 14.97 1 12 1 7.7 1 3.99 3.47 2.18 7.06l3.66 2.84c.87-2.6 3.3-4.52 6.16-4.52z"/>
-            </svg>
-            <span>Continue with Google</span>
-          </button>
-        </div>
-
-        <div class="login-footer-divider">
-          <span>or</span>
-        </div>
-
-        <button id="guestContinueBtn" class="guest-btn">Continue as Guest</button>
-      </div>
-    </div>
-
     <!-- Main Workspace -->
-    <main class="main-content">
-      <!-- Left: Video Feeds -->
-      <section class="video-container">
-        <!-- Remote Stranger Video -->
+    <main class="main-content" id="mainContent">
+      <!-- Video Area (Hidden completely in Text-Only Mode) -->
+      <section class="video-container" id="videoContainer">
+        <!-- Remote Video Card -->
         <div class="remote-video-card" id="remoteVideoCard">
           <video id="remoteVideo" autoplay playsinline></video>
           <div class="video-overlay" id="videoOverlay">
             <div class="overlay-content">
               <div class="pulse-loader" id="loaderAnimation"></div>
-              <h3 id="overlayStatus">Click "Start Chat" to connect with a stranger</h3>
-              <p id="overlaySub">Safe, encrypted 1-on-1 peer-to-peer live chat</p>
+              <h3 id="overlayStatus">Click "Start Chat" to find a stranger</h3>
+              <p id="overlaySub">Encrypted 1-on-1 peer-to-peer connection</p>
             </div>
           </div>
           <div class="partner-badge" id="partnerBadge" style="display: none;">
             <span>Stranger</span>
             <span class="partner-gender" id="partnerGenderTag"></span>
+            <span class="partner-age" id="partnerAgeTag"></span>
           </div>
         </div>
 
         <!-- Local Self Video (PiP) -->
-        <div class="local-video-card">
+        <div class="local-video-card" id="localVideoCard">
           <video id="localVideo" autoplay playsinline muted></video>
           <div class="local-label">You</div>
           <div class="media-controls">
@@ -141,12 +121,14 @@
         </div>
       </section>
 
-      <!-- Right: Real-time Text Chat -->
-      <section class="chat-container">
+      <!-- Real-time Text Chat Area -->
+      <section class="chat-container" id="chatContainer">
+        <!-- Chat Header Status -->
         <div class="chat-header">
           <div class="chat-status-info">
             <span class="status-indicator" id="chatStatusDot"></span>
-            <span id="chatStatusText">Disconnected</span>
+            <span id="chatStatusText">Ready to connect</span>
+            <span id="commonInterestsBanner" class="interests-match-tag" style="display: none;"></span>
           </div>
 
           <div class="safety-actions" id="safetyActions" style="display: none;">
@@ -159,7 +141,7 @@
         <div class="messages-container" id="messagesContainer">
           <div class="system-message welcome">
             <p>👋 Welcome to <strong>Clay Chat</strong>!</p>
-            <p>Connect with people worldwide. Remember to stay safe, respectful, and adhere to community guidelines.</p>
+            <p>Choose between <strong>Video Chat</strong> or <strong>Text-Only Chat</strong> above. Be respectful and adhere to community guidelines.</p>
           </div>
         </div>
 
@@ -194,11 +176,42 @@
     </main>
   </div>
 
+  <!-- Interests Selection Modal -->
+  <div class="modal-backdrop" id="interestsModal" style="display: none;">
+    <div class="modal-box">
+      <h3>🏷️ Select Your Interests & Age</h3>
+      <p class="modal-desc">Connect with people who share common topics and age range.</p>
+
+      <div class="profile-input-row" style="margin-bottom: 16px;">
+        <label style="font-size: 0.85rem; font-weight: 600; display: block; margin-bottom: 6px;">Your Age:</label>
+        <input type="number" id="myAgeInput" min="18" max="99" value="22" style="padding: 8px 12px; border-radius: 8px; border: 1px solid #374151; background: #1f2937; color: #fff; width: 100px;" />
+      </div>
+
+      <label style="font-size: 0.85rem; font-weight: 600; display: block; margin-bottom: 8px;">Select Interests (Tap to toggle):</label>
+      <div class="interests-grid" id="interestsGrid">
+        <button type="button" class="interest-chip" data-tag="Music">🎵 Music</button>
+        <button type="button" class="interest-chip" data-tag="Gaming">🎮 Gaming</button>
+        <button type="button" class="interest-chip" data-tag="Movies">🎬 Movies</button>
+        <button type="button" class="interest-chip" data-tag="Coding">💻 Coding</button>
+        <button type="button" class="interest-chip" data-tag="Travel">✈️ Travel</button>
+        <button type="button" class="interest-chip" data-tag="Sports">⚽ Sports</button>
+        <button type="button" class="interest-chip" data-tag="Anime">🎨 Anime</button>
+        <button type="button" class="interest-chip" data-tag="Reading">📚 Books</button>
+        <button type="button" class="interest-chip" data-tag="Food">🍕 Food</button>
+        <button type="button" class="interest-chip" data-tag="Casual">💬 Casual</button>
+      </div>
+
+      <div class="modal-actions" style="margin-top: 24px;">
+        <button type="button" id="saveInterestsBtn" class="primary-btn" style="width: 100%;">Save Preferences</button>
+      </div>
+    </div>
+  </div>
+
   <!-- Report Modal -->
   <div class="modal-backdrop" id="reportModal" style="display: none;">
     <div class="modal-box">
       <h3>🚨 Report Stranger</h3>
-      <p class="modal-desc">Help keep Clay Chat safe. Why are you reporting this user?</p>
+      <p class="modal-desc">Help keep Clay Chat safe. Reports are immediately reviewed by our admin team.</p>
       
       <div class="report-options">
         <label><input type="radio" name="reportReason" value="Inappropriate nudity or NSFW content" checked> Inappropriate nudity / NSFW</label>
@@ -219,8 +232,8 @@
     <div class="modal-box vip-modal">
       <div class="vip-header">
         <span class="vip-crown-large">👑</span>
-        <h2>Unlock VIP Membership</h2>
-        <p>Instant UPI Payment powered by UroPay</p>
+        <h2 id="modalVipTitle">Unlock VIP Membership</h2>
+        <p id="modalVipDiscountText">Instant UPI Activation via Google Pay</p>
       </div>
 
       <!-- Stage 1: Plans & Perks -->
@@ -229,29 +242,29 @@
           <div class="perk-item">
             <span class="perk-icon">✨</span>
             <div>
-              <strong>Gender Match Filtering</strong>
-              <p>Filter specifically to match with Female or Male users.</p>
+              <strong>Gender & Age Matching</strong>
+              <p>Filter specifically to match with Female, Male, or specific age brackets.</p>
+            </div>
+          </div>
+          <div class="perk-item">
+            <span class="perk-icon">🏷️</span>
+            <div>
+              <strong>Common Interests Priority</strong>
+              <p>Instant matching with strangers who share your hobbies.</p>
             </div>
           </div>
           <div class="perk-item">
             <span class="perk-icon">⚡</span>
             <div>
               <strong>Instant Priority Queue</strong>
-              <p>Zero wait time matching with active strangers.</p>
-            </div>
-          </div>
-          <div class="perk-item">
-            <span class="perk-icon">🛡️</span>
-            <div>
-              <strong>VIP Golden Badge</strong>
-              <p>Stand out with verified status.</p>
+              <p>Zero wait times with instant stranger connection.</p>
             </div>
           </div>
         </div>
 
         <div class="pricing-card">
-          <span class="price-val">₹1</span>
-          <span class="price-period">/ month (UPI Instant Payment)</span>
+          <span class="price-val" id="vipPriceDisplay">₹20</span>
+          <span class="price-period">/ 30 Days (Instant UPI Activation)</span>
         </div>
 
         <div class="modal-actions">
@@ -260,7 +273,7 @@
         </div>
       </div>
 
-      <!-- Stage 2: UroPay UPI QR & UTR Verification -->
+      <!-- Stage 2: UroPay / GPay UPI QR & UTR Verification -->
       <div id="vipQrStep" style="display: none;">
         <div class="upi-pay-card">
           <div class="qr-wrapper">
@@ -268,10 +281,10 @@
           </div>
 
           <div class="upi-details">
-            <div class="payee-tag" style="margin-bottom: 8px; font-size: 0.9rem;">
-              Paying to: <strong id="upiPayeeText" style="color: #818cf8;">Dhinakar Sivakumar (sdhinakar6-5@okaxis)</strong>
+            <div class="payee-tag" style="margin-bottom: 6px; font-size: 0.95rem;">
+              Payee: <strong id="upiPayeeText" style="color: #818cf8;">LIGHT.LTD (8940679198@okbizaxis)</strong>
             </div>
-            <div class="amount-tag">Amount: <strong id="upiAmountText">₹1.00</strong></div>
+            <div class="amount-tag">Amount: <strong id="upiAmountText">₹20.00</strong></div>
             <p class="upi-instruction">Scan with Google Pay, PhonePe, Paytm, or BHIM</p>
             <a id="upiIntentBtn" href="#" class="upi-intent-link" target="_blank">📱 Pay directly in UPI App</a>
           </div>
@@ -283,7 +296,7 @@
               <input type="text" id="utrInput" placeholder="e.g. 430686551035" maxlength="16" />
               <button id="submitUtrBtn" class="submit-utr-btn">Verify UTR</button>
             </div>
-            <p class="utr-help" id="utrStatusMsg">UTR is found in your UPI app payment receipt.</p>
+            <p class="utr-help" id="utrStatusMsg">Automatic instant activation via GPay Business Webhook.</p>
           </div>
 
           <div class="modal-actions" style="margin-top: 16px;">

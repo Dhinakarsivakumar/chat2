@@ -1,0 +1,559 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Clay Chat - Admin & Moderation Panel</title>
+  <link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+  <script src="/socket.io/socket.io.js"></script>
+  <style>
+    :root {
+      --bg: #090d16;
+      --card-bg: #111827;
+      --border: #1f2937;
+      --primary: #6366f1;
+      --primary-hover: #4f46e5;
+      --success: #10b981;
+      --danger: #ef4444;
+      --warning: #f59e0b;
+      --text: #f3f4f6;
+      --text-muted: #9ca3af;
+    }
+    * { box-sizing: border-box; margin: 0; padding: 0; font-family: 'Plus Jakarta Sans', sans-serif; }
+    body { background-color: var(--bg); color: var(--text); min-height: 100vh; display: flex; flex-direction: column; }
+
+    /* Login Overlay */
+    #loginScreen {
+      position: fixed; inset: 0; background: rgba(9, 13, 22, 0.95); backdrop-filter: blur(8px);
+      display: flex; align-items: center; justify-content: center; z-index: 1000;
+    }
+    .login-box {
+      background: var(--card-bg); border: 1px solid var(--border); border-radius: 16px;
+      padding: 36px; width: 90%; max-width: 420px; text-align: center; box-shadow: 0 20px 40px rgba(0,0,0,0.5);
+    }
+    .login-box h2 { font-size: 1.6rem; margin-bottom: 8px; color: #fff; }
+    .login-box p { color: var(--text-muted); font-size: 0.9rem; margin-bottom: 24px; }
+    .login-box input {
+      width: 100%; padding: 12px 16px; border-radius: 10px; border: 1px solid var(--border);
+      background: #1f2937; color: #fff; font-size: 1rem; margin-bottom: 16px; outline: none;
+    }
+    .login-box button {
+      width: 100%; padding: 12px; border-radius: 10px; border: none; background: var(--primary);
+      color: #fff; font-weight: 700; font-size: 1rem; cursor: pointer; transition: 0.2s;
+    }
+    .login-box button:hover { background: var(--primary-hover); }
+
+    /* Admin Layout */
+    .admin-header {
+      background: var(--card-bg); border-bottom: 1px solid var(--border); padding: 16px 24px;
+      display: flex; justify-content: space-between; align-items: center;
+    }
+    .admin-brand { display: flex; align-items: center; gap: 10px; font-size: 1.3rem; font-weight: 800; }
+    .admin-brand span.badge {
+      font-size: 0.75rem; background: var(--primary); padding: 3px 8px; border-radius: 6px; font-weight: 600;
+    }
+    .admin-tabs { display: flex; gap: 8px; }
+    .tab-btn {
+      padding: 8px 16px; background: transparent; border: 1px solid var(--border); border-radius: 8px;
+      color: var(--text-muted); cursor: pointer; font-weight: 600; font-size: 0.9rem; transition: 0.2s;
+    }
+    .tab-btn.active, .tab-btn:hover { background: #1f2937; color: #fff; border-color: var(--primary); }
+
+    .admin-content { padding: 24px; max-width: 1300px; margin: 0 auto; width: 100%; flex: 1; }
+
+    /* Stat Cards */
+    .stats-grid {
+      display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: 18px; margin-bottom: 28px;
+    }
+    .stat-card {
+      background: var(--card-bg); border: 1px solid var(--border); border-radius: 14px; padding: 20px;
+      display: flex; flex-direction: column; gap: 6px;
+    }
+    .stat-title { color: var(--text-muted); font-size: 0.85rem; font-weight: 600; text-transform: uppercase; letter-spacing: 0.5px; }
+    .stat-val { font-size: 2rem; font-weight: 800; color: #fff; }
+    .stat-sub { font-size: 0.8rem; color: var(--success); font-weight: 600; }
+
+    /* Sections */
+    .admin-panel-card {
+      background: var(--card-bg); border: 1px solid var(--border); border-radius: 16px; padding: 24px;
+      margin-bottom: 24px;
+    }
+    .panel-header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 20px; }
+    .panel-header h3 { font-size: 1.25rem; font-weight: 700; }
+
+    /* Form Fields */
+    .form-row { display: flex; gap: 16px; margin-bottom: 16px; flex-wrap: wrap; }
+    .form-group { flex: 1; min-width: 200px; display: flex; flex-direction: column; gap: 6px; }
+    .form-group label { font-size: 0.85rem; color: var(--text-muted); font-weight: 600; }
+    .form-group input, .form-group textarea {
+      padding: 10px 14px; border-radius: 8px; border: 1px solid var(--border); background: #1f2937;
+      color: #fff; font-size: 0.95rem; outline: none;
+    }
+    .save-btn {
+      padding: 10px 20px; background: var(--success); color: #fff; border: none; border-radius: 8px;
+      font-weight: 700; cursor: pointer; align-self: flex-start; transition: 0.2s;
+    }
+    .save-btn:hover { opacity: 0.9; }
+
+    /* Tables */
+    .table-responsive { overflow-x: auto; }
+    table { width: 100%; border-collapse: collapse; text-align: left; font-size: 0.9rem; }
+    th { padding: 12px 16px; background: #1f2937; color: var(--text-muted); font-weight: 600; border-bottom: 1px solid var(--border); }
+    td { padding: 14px 16px; border-bottom: 1px solid var(--border); color: #e5e7eb; vertical-align: middle; }
+    tr:hover { background: rgba(255,255,255,0.02); }
+
+    .badge-pill {
+      display: inline-block; padding: 4px 10px; border-radius: 20px; font-size: 0.75rem; font-weight: 700;
+    }
+    .badge-vip { background: rgba(245, 158, 11, 0.2); color: #fbbf24; border: 1px solid rgba(245, 158, 11, 0.4); }
+    .badge-free { background: rgba(156, 163, 175, 0.2); color: #9ca3af; }
+    .badge-danger { background: rgba(239, 68, 68, 0.2); color: #f87171; }
+    .badge-success { background: rgba(16, 185, 129, 0.2); color: #34d399; }
+
+    .action-btn-sm {
+      padding: 6px 12px; border-radius: 6px; font-size: 0.8rem; font-weight: 600; border: none; cursor: pointer; transition: 0.2s;
+    }
+    .btn-ban { background: var(--danger); color: #fff; }
+    .btn-ban:hover { background: #dc2626; }
+    .btn-dismiss { background: #374151; color: #d1d5db; margin-left: 6px; }
+    .btn-toggle-vip { background: var(--primary); color: #fff; }
+
+    /* Live Toast */
+    .toast-container { position: fixed; bottom: 20px; right: 20px; z-index: 2000; display: flex; flex-direction: column; gap: 10px; }
+    .toast {
+      background: #1e1b4b; border: 1px solid #6366f1; color: #fff; padding: 14px 20px; border-radius: 10px;
+      box-shadow: 0 10px 25px rgba(0,0,0,0.4); display: flex; align-items: center; gap: 12px;
+      animation: slideIn 0.3s ease;
+    }
+    @keyframes slideIn { from { transform: translateX(100%); } to { transform: translateX(0); } }
+  </style>
+</head>
+<body>
+
+  <!-- Login Modal -->
+  <div id="loginScreen">
+    <div class="login-box">
+      <h2>🔐 Admin Authentication</h2>
+      <p>Enter Master Password to access Clay Chat Management</p>
+      <input type="password" id="adminPassInput" placeholder="Enter admin password..." value="admin123" />
+      <button id="loginBtn">Access Dashboard</button>
+      <p id="loginError" style="color: var(--danger); font-size: 0.85rem; margin-top: 10px; display: none;">Invalid password</p>
+    </div>
+  </div>
+
+  <!-- Header -->
+  <header class="admin-header">
+    <div class="admin-brand">
+      <span>💬 Clay Chat</span>
+      <span class="badge">ADMIN CORE</span>
+    </div>
+    <div class="admin-tabs">
+      <button class="tab-btn active" data-tab="tab-overview">Overview</button>
+      <button class="tab-btn" data-tab="tab-offers">Offers & Pricing</button>
+      <button class="tab-btn" data-tab="tab-reports">Reports & Bans</button>
+      <button class="tab-btn" data-tab="tab-users">Customers</button>
+      <button class="tab-btn" data-tab="tab-orders">Orders & Payments</button>
+    </div>
+    <div>
+      <button id="refreshBtn" class="tab-btn">🔄 Refresh Data</button>
+    </div>
+  </header>
+
+  <!-- Main Content -->
+  <main class="admin-content">
+    
+    <!-- STATS -->
+    <div class="stats-grid">
+      <div class="stat-card">
+        <span class="stat-title">🟢 Live Online Users</span>
+        <span class="stat-val" id="metricOnline">0</span>
+        <span class="stat-sub" id="metricModes">📹 0 Video | 💬 0 Text</span>
+      </div>
+      <div class="stat-card">
+        <span class="stat-title">👥 Registered Customers</span>
+        <span class="stat-val" id="metricUsers">0</span>
+        <span class="stat-sub">Google Login Synced</span>
+      </div>
+      <div class="stat-card">
+        <span class="stat-title">👑 VIP Subscriptions</span>
+        <span class="stat-val" id="metricVips">0</span>
+        <span class="stat-sub" id="metricVipRatio">Active members</span>
+      </div>
+      <div class="stat-card">
+        <span class="stat-title">💰 Total Revenue</span>
+        <span class="stat-val" id="metricRevenue">₹0.00</span>
+        <span class="stat-sub" id="metricOrders">0 Completed Orders</span>
+      </div>
+      <div class="stat-card">
+        <span class="stat-title">🚨 Safety & Reports</span>
+        <span class="stat-val" id="metricReports">0</span>
+        <span class="stat-sub" id="metricBans">0 Banned Users</span>
+      </div>
+    </div>
+
+    <!-- TAB 1: OVERVIEW -->
+    <div id="tab-overview" class="tab-pane">
+      <div class="admin-panel-card">
+        <div class="panel-header">
+          <h3>⚡ Quick Overview & System Status</h3>
+        </div>
+        <p style="color: var(--text-muted); line-height: 1.6; margin-bottom: 16px;">
+          Clay Chat is operating with WebRTC real-time video, standalone text-only chat, GPay for Business companion webhook, and age/interest based smart matchmaking.
+        </p>
+        <div style="display: flex; gap: 12px; flex-wrap: wrap;">
+          <a href="/" target="_blank" style="padding: 10px 18px; background: #374151; color: #fff; text-decoration: none; border-radius: 8px; font-weight: 600;">Open User Web App ↗</a>
+          <a href="/api/config" target="_blank" style="padding: 10px 18px; background: #374151; color: #fff; text-decoration: none; border-radius: 8px; font-weight: 600;">System Config API ↗</a>
+          <a href="/ClayGPayCompanion.apk" download style="padding: 10px 18px; background: var(--primary); color: #fff; text-decoration: none; border-radius: 8px; font-weight: 600;">📱 Download GPay Companion APK</a>
+        </div>
+      </div>
+    </div>
+
+    <!-- TAB 2: OFFERS & PRICING -->
+    <div id="tab-offers" class="tab-pane" style="display: none;">
+      <div class="admin-panel-card">
+        <div class="panel-header">
+          <h3>👑 Dynamic VIP Offers & Subscription Settings</h3>
+          <span style="font-size: 0.85rem; color: var(--text-muted);">Changes take effect instantly on client apps without server restart</span>
+        </div>
+        <form id="offersForm">
+          <div class="form-row">
+            <div class="form-group">
+              <label>VIP Subscription Price (₹ INR):</label>
+              <input type="number" id="offerPrice" min="1" step="1" required />
+            </div>
+            <div class="form-group">
+              <label>Plan Title:</label>
+              <input type="text" id="offerTitle" required />
+            </div>
+          </div>
+          <div class="form-row">
+            <div class="form-group">
+              <label>Promo Badge Tag:</label>
+              <input type="text" id="offerBadge" placeholder="e.g. ⚡ SPECIAL 50% OFF" />
+            </div>
+            <div class="form-group">
+              <label>Discount Description Text:</label>
+              <input type="text" id="offerDiscountText" placeholder="e.g. Limited Time Offer: ₹20 only" />
+            </div>
+          </div>
+          <div class="form-group" style="margin-bottom: 20px;">
+            <label>Features (One per line):</label>
+            <textarea id="offerFeatures" rows="4"></textarea>
+          </div>
+          <button type="submit" class="save-btn">💾 Save & Publish Offer</button>
+        </form>
+      </div>
+    </div>
+
+    <!-- TAB 3: REPORTS & MODERATION -->
+    <div id="tab-reports" class="tab-pane" style="display: none;">
+      <div class="admin-panel-card">
+        <div class="panel-header">
+          <h3>🚨 User Reports & Moderation Engine</h3>
+          <span id="reportsCountBadge" class="badge-pill badge-danger">0 Reports</span>
+        </div>
+        <div class="table-responsive">
+          <table>
+            <thead>
+              <tr>
+                <th>Date / Time</th>
+                <th>Reported User ID</th>
+                <th>Reporter ID</th>
+                <th>Reason</th>
+                <th>Status</th>
+                <th>Action</th>
+              </tr>
+            </thead>
+            <tbody id="reportsTableBody">
+              <tr><td colspan="6" style="text-align: center; color: var(--text-muted);">No reports yet.</td></tr>
+            </tbody>
+          </table>
+        </div>
+      </div>
+    </div>
+
+    <!-- TAB 4: REGISTERED CUSTOMERS -->
+    <div id="tab-users" class="tab-pane" style="display: none;">
+      <div class="admin-panel-card">
+        <div class="panel-header">
+          <h3>👥 Registered Customers & Google Profiles</h3>
+          <span id="usersCountBadge" class="badge-pill badge-vip">0 Users</span>
+        </div>
+        <div class="table-responsive">
+          <table>
+            <thead>
+              <tr>
+                <th>Customer</th>
+                <th>Email</th>
+                <th>VIP Status</th>
+                <th>Created At</th>
+                <th>Manage VIP</th>
+              </tr>
+            </thead>
+            <tbody id="usersTableBody">
+              <tr><td colspan="5" style="text-align: center; color: var(--text-muted);">No registered users yet.</td></tr>
+            </tbody>
+          </table>
+        </div>
+      </div>
+    </div>
+
+    <!-- TAB 5: ORDERS & PAYMENTS -->
+    <div id="tab-orders" class="tab-pane" style="display: none;">
+      <div class="admin-panel-card">
+        <div class="panel-header">
+          <h3>💰 Orders & GPay Business Webhook Logs</h3>
+          <span class="badge-pill badge-success">GPay VPA: 8940679198@okbizaxis</span>
+        </div>
+        <div class="table-responsive">
+          <table>
+            <thead>
+              <tr>
+                <th>Order ID</th>
+                <th>Customer / User</th>
+                <th>Amount (₹)</th>
+                <th>Status</th>
+                <th>Source</th>
+                <th>UTR / Note</th>
+                <th>Date</th>
+              </tr>
+            </thead>
+            <tbody id="ordersTableBody">
+              <tr><td colspan="7" style="text-align: center; color: var(--text-muted);">No orders recorded yet.</td></tr>
+            </tbody>
+          </table>
+        </div>
+      </div>
+    </div>
+
+  </main>
+
+  <!-- Live Toast Container -->
+  <div class="toast-container" id="toastContainer"></div>
+
+  <script>
+    let adminKey = localStorage.getItem('clay_admin_key') || 'admin123';
+    let socket = null;
+
+    const loginScreen = document.getElementById('loginScreen');
+    const adminPassInput = document.getElementById('adminPassInput');
+    const loginBtn = document.getElementById('loginBtn');
+    const loginError = document.getElementById('loginError');
+
+    // Tab Navigation
+    document.querySelectorAll('.tab-btn[data-tab]').forEach(btn => {
+      btn.addEventListener('click', () => {
+        document.querySelectorAll('.tab-btn').forEach(b => b.classList.remove('active'));
+        document.querySelectorAll('.tab-pane').forEach(p => p.style.display = 'none');
+        btn.classList.add('active');
+        const target = document.getElementById(btn.getAttribute('data-tab'));
+        if (target) target.style.display = 'block';
+      });
+    });
+
+    loginBtn.addEventListener('click', () => {
+      adminKey = adminPassInput.value.trim();
+      fetchDashboardData(true);
+    });
+
+    document.getElementById('refreshBtn').addEventListener('click', () => fetchDashboardData());
+
+    async function fetchDashboardData(isLoginAttempt = false) {
+      try {
+        const res = await fetch(`/api/admin/metrics?key=${encodeURIComponent(adminKey)}`);
+        if (!res.ok) {
+          if (isLoginAttempt) loginError.style.display = 'block';
+          return;
+        }
+        const data = await res.json();
+        if (data.success) {
+          localStorage.setItem('clay_admin_key', adminKey);
+          loginScreen.style.display = 'none';
+          renderDashboard(data);
+          initSocket();
+        }
+      } catch (err) {
+        console.error('Error fetching admin data:', err);
+      }
+    }
+
+    function renderDashboard(data) {
+      const { metrics, users, reports, recentOrders, offers } = data;
+
+      // Metrics
+      document.getElementById('metricOnline').textContent = metrics.totalOnline;
+      document.getElementById('metricModes').textContent = `📹 ${metrics.videoOnline} Video | 💬 ${metrics.textOnline} Text`;
+      document.getElementById('metricUsers').textContent = metrics.totalRegistered;
+      document.getElementById('metricVips').textContent = metrics.totalVip;
+      document.getElementById('metricRevenue').textContent = `₹${metrics.totalRevenueRupees}`;
+      document.getElementById('metricOrders').textContent = `${metrics.completedOrders} Orders`;
+      document.getElementById('metricReports').textContent = metrics.totalReports;
+      document.getElementById('metricBans').textContent = `${metrics.bannedCount} Banned`;
+
+      // Offers Form
+      if (offers) {
+        document.getElementById('offerPrice').value = offers.vipPrice || 20;
+        document.getElementById('offerTitle').value = offers.title || 'VIP Monthly Pass';
+        document.getElementById('offerBadge').value = offers.badge || '';
+        document.getElementById('offerDiscountText').value = offers.discountText || '';
+        document.getElementById('offerFeatures').value = (offers.features || []).join('\n');
+      }
+
+      // Reports Table
+      const rBody = document.getElementById('reportsTableBody');
+      if (reports && reports.length > 0) {
+        rBody.innerHTML = reports.map(r => `
+          <tr>
+            <td>${new Date(r.timestamp).toLocaleString()}</td>
+            <td><code>${r.reportedId}</code></td>
+            <td><code>${r.reporterId}</code></td>
+            <td>${r.reason}</td>
+            <td><span class="badge-pill ${r.status === 'BANNED' ? 'badge-danger' : (r.status === 'DISMISSED' ? 'badge-free' : 'badge-vip')}">${r.status}</span></td>
+            <td>
+              ${r.status === 'PENDING' ? `
+                <button class="action-btn-sm btn-ban" onclick="handleReport('${r.id}', 'ban')">🚫 Ban User</button>
+                <button class="action-btn-sm btn-dismiss" onclick="handleReport('${r.id}', 'dismiss')">Dismiss</button>
+              ` : `<span>Processed</span>`}
+            </td>
+          </tr>
+        `).join('');
+      } else {
+        rBody.innerHTML = `<tr><td colspan="6" style="text-align: center; color: var(--text-muted);">No reports registered.</td></tr>`;
+      }
+
+      // Users Table
+      const uBody = document.getElementById('usersTableBody');
+      if (users && users.length > 0) {
+        uBody.innerHTML = users.map(u => `
+          <tr>
+            <td style="display: flex; align-items: center; gap: 10px;">
+              ${u.picture ? `<img src="${u.picture}" style="width: 28px; height: 28px; border-radius: 50%;">` : '👤'}
+              <strong>${u.name || 'User'}</strong>
+            </td>
+            <td>${u.email}</td>
+            <td><span class="badge-pill ${u.isVip ? 'badge-vip' : 'badge-free'}">${u.isVip ? '⭐ VIP' : 'Free'}</span></td>
+            <td>${new Date(u.createdAt).toLocaleDateString()}</td>
+            <td>
+              <button class="action-btn-sm btn-toggle-vip" onclick="toggleUserVip('${u.email}', ${!u.isVip})">
+                ${u.isVip ? 'Revoke VIP' : 'Grant VIP ⭐'}
+              </button>
+            </td>
+          </tr>
+        `).join('');
+      } else {
+        uBody.innerHTML = `<tr><td colspan="5" style="text-align: center; color: var(--text-muted);">No registered users yet.</td></tr>`;
+      }
+
+      // Orders Table
+      const oBody = document.getElementById('ordersTableBody');
+      if (recentOrders && recentOrders.length > 0) {
+        oBody.innerHTML = recentOrders.map(o => `
+          <tr>
+            <td><code>${o.uroPayOrderId || o.merchantOrderId}</code></td>
+            <td>${o.customerEmail || o.userId}</td>
+            <td><strong>₹${o.amountRupees || (o.amount / 100).toFixed(2)}</strong></td>
+            <td><span class="badge-pill ${o.status === 'COMPLETED' ? 'badge-success' : 'badge-vip'}">${o.status}</span></td>
+            <td>${o.source || 'UPI'}</td>
+            <td>${o.utr || o.text || '-'}</td>
+            <td>${new Date(o.createdAt).toLocaleString()}</td>
+          </tr>
+        `).join('');
+      } else {
+        oBody.innerHTML = `<tr><td colspan="7" style="text-align: center; color: var(--text-muted);">No orders recorded yet.</td></tr>`;
+      }
+    }
+
+    // Save Offers Handler
+    document.getElementById('offersForm').addEventListener('submit', async (e) => {
+      e.preventDefault();
+      const payload = {
+        vipPrice: parseFloat(document.getElementById('offerPrice').value),
+        title: document.getElementById('offerTitle').value,
+        badge: document.getElementById('offerBadge').value,
+        discountText: document.getElementById('offerDiscountText').value,
+        features: document.getElementById('offerFeatures').value.split('\n').filter(s => s.trim())
+      };
+
+      try {
+        const res = await fetch(`/api/admin/offers?key=${encodeURIComponent(adminKey)}`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(payload)
+        });
+        const d = await res.json();
+        if (d.success) {
+          showToast('✅ VIP Offer updated successfully!');
+          fetchDashboardData();
+        }
+      } catch (err) {
+        showToast('❌ Failed to update offer');
+      }
+    });
+
+    // Handle Report Action
+    window.handleReport = async function(id, action) {
+      if (!confirm(`Are you sure you want to ${action} this report?`)) return;
+      try {
+        const res = await fetch(`/api/admin/reports/${id}/action?key=${encodeURIComponent(adminKey)}`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ action })
+        });
+        const d = await res.json();
+        if (d.success) {
+          showToast(`Report ${action === 'ban' ? 'User Banned' : 'Dismissed'}`);
+          fetchDashboardData();
+        }
+      } catch (err) {
+        showToast('❌ Failed to process report');
+      }
+    };
+
+    // Toggle VIP
+    window.toggleUserVip = async function(userId, isVip) {
+      try {
+        const res = await fetch(`/api/admin/users/${encodeURIComponent(userId)}/vip?key=${encodeURIComponent(adminKey)}`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ isVip })
+        });
+        const d = await res.json();
+        if (d.success) {
+          showToast(`VIP updated for ${userId}`);
+          fetchDashboardData();
+        }
+      } catch (err) {
+        showToast('❌ Failed to update VIP');
+      }
+    };
+
+    function showToast(msg) {
+      const container = document.getElementById('toastContainer');
+      const toast = document.createElement('div');
+      toast.className = 'toast';
+      toast.innerHTML = `<span>⚡</span> <span>${msg}</span>`;
+      container.appendChild(toast);
+      setTimeout(() => toast.remove(), 4000);
+    }
+
+    function initSocket() {
+      if (socket) return;
+      socket = io();
+      socket.emit('admin-join', { key: adminKey });
+      socket.on('new-order', (ord) => {
+        showToast(`🎉 New Payment Received: ₹${ord.amountRupees || (ord.amount / 100)} - VIP Activated!`);
+        fetchDashboardData();
+      });
+      socket.on('new-report', (rep) => {
+        showToast(`🚨 New Report Filed: ${rep.reason}`);
+        fetchDashboardData();
+      });
+    }
+
+    // Auto-login if key is stored
+    if (adminKey) {
+      fetchDashboardData();
+    }
+  </script>
+</body>
+</html>

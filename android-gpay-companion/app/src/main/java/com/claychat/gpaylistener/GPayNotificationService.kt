@@ -1,6 +1,10 @@
 package com.claychat.gpaylistener
 
 import android.app.Notification
+import android.app.NotificationChannel
+import android.app.NotificationManager
+import android.content.Context
+import android.os.Build
 import android.service.notification.NotificationListenerService
 import android.service.notification.StatusBarNotification
 import android.util.Log
@@ -17,6 +21,12 @@ class GPayNotificationService : NotificationListenerService() {
     private val TAG = "GPayListener"
     private val GPAY_BUSINESS_PACKAGE = "com.google.android.apps.nbu.paisa.merchant"
     private val GPAY_PERSONAL_PACKAGE = "com.google.android.apps.nbu.paisa.user"
+    private val CHANNEL_ID = "clay_orders_channel"
+
+    override fun onCreate() {
+        super.onCreate()
+        createNotificationChannel()
+    }
 
     override fun onNotificationPosted(sbn: StatusBarNotification?) {
         super.onNotificationPosted(sbn)
@@ -34,6 +44,45 @@ class GPayNotificationService : NotificationListenerService() {
         val fullContent = "$title $text".lowercase()
         if (fullContent.contains("received") || fullContent.contains("credited") || fullContent.contains("paid you") || fullContent.contains("₹")) {
             sendWebhookToServer(title, text)
+            triggerLocalOrderNotification(title, text)
+        }
+    }
+
+    private fun createNotificationChannel() {
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+            val name = "Clay Chat Order Alerts"
+            val descriptionText = "Notifies when a new customer VIP order is detected via Google Pay"
+            val importance = NotificationManager.IMPORTANCE_HIGH
+            val channel = NotificationChannel(CHANNEL_ID, name, importance).apply {
+                description = descriptionText
+                enableVibration(true)
+            }
+            val notificationManager: NotificationManager =
+                getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
+            notificationManager.createNotificationChannel(channel)
+        }
+    }
+
+    private fun triggerLocalOrderNotification(title: String, text: String) {
+        try {
+            val notificationManager = getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
+            val builder = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+                Notification.Builder(this, CHANNEL_ID)
+            } else {
+                @Suppress("DEPRECATION")
+                Notification.Builder(this)
+            }
+
+            val notification = builder
+                .setContentTitle("🎉 New Clay Chat Order Received!")
+                .setContentText("$title - $text")
+                .setSmallIcon(android.R.drawable.ic_dialog_info)
+                .setAutoCancel(true)
+                .build()
+
+            notificationManager.notify(System.currentTimeMillis().toInt(), notification)
+        } catch (e: Exception) {
+            Log.e(TAG, "Failed to display local order notification: ${e.message}", e)
         }
     }
 

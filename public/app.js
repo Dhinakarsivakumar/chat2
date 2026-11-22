@@ -1,7 +1,8 @@
-// StrangerLive Client Application
+// Clay Chat Client Application
 const socket = io();
 
 // State
+let chatMode = localStorage.getItem('clay_chat_mode') || 'video'; // 'video' | 'text'
 let localStream = null;
 let remoteStream = null;
 let peerConnection = null;
@@ -9,15 +10,32 @@ let currentRoomId = null;
 let isInitiator = false;
 let isConnectedToPartner = false;
 let isVip = false;
-let myUserId = 'user_' + Math.random().toString(36).substring(2, 9);
+let myUserId = localStorage.getItem('clay_user_id') || ('user_' + Math.random().toString(36).substring(2, 9));
+localStorage.setItem('clay_user_id', myUserId);
 let typingTimeout = null;
 
-// UroPay State
+// User Profile & Interests State
+let myAge = parseInt(localStorage.getItem('clay_my_age'), 10) || 22;
+let myInterests = [];
+try {
+  myInterests = JSON.parse(localStorage.getItem('clay_interests')) || ['Music', 'Movies'];
+} catch (e) {
+  myInterests = ['Music', 'Movies'];
+}
+
+// UroPay / GPay State
 let currentUroPayOrderId = null;
 let paymentPollInterval = null;
+let currentOffers = null;
 
 // DOM Elements
+const mainContent = document.getElementById('mainContent');
+const modeVideoBtn = document.getElementById('modeVideoBtn');
+const modeTextBtn = document.getElementById('modeTextBtn');
+
+const localVideoCard = document.getElementById('localVideoCard');
 const localVideo = document.getElementById('localVideo');
+const remoteVideoCard = document.getElementById('remoteVideoCard');
 const remoteVideo = document.getElementById('remoteVideo');
 const videoOverlay = document.getElementById('videoOverlay');
 const overlayStatus = document.getElementById('overlayStatus');
@@ -25,15 +43,19 @@ const overlaySub = document.getElementById('overlaySub');
 const loaderAnimation = document.getElementById('loaderAnimation');
 const partnerBadge = document.getElementById('partnerBadge');
 const partnerGenderTag = document.getElementById('partnerGenderTag');
+const partnerAgeTag = document.getElementById('partnerAgeTag');
 
 const onlineCountEl = document.getElementById('onlineCount');
-const myGenderSelect = document.getElementById('myGenderSelect');
 const lookingForSelect = document.getElementById('lookingForSelect');
+const agePreferenceSelect = document.getElementById('agePreferenceSelect');
 const vipBadgeBtn = document.getElementById('vipBadgeBtn');
 const vipBtnText = document.getElementById('vipBtnText');
+const activeInterestsCount = document.getElementById('activeInterestsCount');
+const openInterestsModalBtn = document.getElementById('openInterestsModalBtn');
 
 const chatStatusDot = document.getElementById('chatStatusDot');
 const chatStatusText = document.getElementById('chatStatusText');
+const commonInterestsBanner = document.getElementById('commonInterestsBanner');
 const safetyActions = document.getElementById('safetyActions');
 const messagesContainer = document.getElementById('messagesContainer');
 const typingIndicator = document.getElementById('typingIndicator');
@@ -49,11 +71,21 @@ const toggleMicBtn = document.getElementById('toggleMicBtn');
 const blockBtn = document.getElementById('blockBtn');
 const reportBtn = document.getElementById('reportBtn');
 
+// Interests Modal Elements
+const interestsModal = document.getElementById('interestsModal');
+const myAgeInput = document.getElementById('myAgeInput');
+const saveInterestsBtn = document.getElementById('saveInterestsBtn');
+
+// Report Modal Elements
 const reportModal = document.getElementById('reportModal');
 const cancelReportBtn = document.getElementById('cancelReportBtn');
 const confirmReportBtn = document.getElementById('confirmReportBtn');
 
+// VIP Modal Elements
 const vipModal = document.getElementById('vipModal');
+const modalVipTitle = document.getElementById('modalVipTitle');
+const modalVipDiscountText = document.getElementById('modalVipDiscountText');
+const vipPriceDisplay = document.getElementById('vipPriceDisplay');
 const vipPlanStep = document.getElementById('vipPlanStep');
 const vipQrStep = document.getElementById('vipQrStep');
 const closeVipModalBtn = document.getElementById('closeVipModalBtn');
@@ -62,6 +94,7 @@ const backToPlansBtn = document.getElementById('backToPlansBtn');
 
 const upiQrImage = document.getElementById('upiQrImage');
 const upiAmountText = document.getElementById('upiAmountText');
+const upiPayeeText = document.getElementById('upiPayeeText');
 const upiIntentBtn = document.getElementById('upiIntentBtn');
 const utrInput = document.getElementById('utrInput');
 const submitUtrBtn = document.getElementById('submitUtrBtn');
@@ -75,8 +108,50 @@ const rtcConfig = {
   ]
 };
 
-// Initialize Media
+// ----------------------------------------------------
+// Mode Switcher (Video vs Text Only)
+// ----------------------------------------------------
+function applyMode(mode) {
+  chatMode = mode;
+  localStorage.setItem('clay_chat_mode', mode);
+
+  if (mode === 'text') {
+    modeTextBtn.classList.add('active');
+    modeVideoBtn.classList.remove('active');
+    mainContent.classList.add('text-only-mode');
+
+    // Close any camera/mic tracks to free hardware
+    if (localStream) {
+      localStream.getTracks().forEach(t => t.stop());
+      localStream = null;
+      localVideo.srcObject = null;
+    }
+    overlayStatus.textContent = 'Text-Only Mode: Ready to chat';
+    overlaySub.textContent = 'Camera & microphone are completely off.';
+    setChatStatus('disconnected', 'Text Chat Mode');
+  } else {
+    modeVideoBtn.classList.add('active');
+    modeTextBtn.classList.remove('active');
+    mainContent.classList.remove('text-only-mode');
+
+    // Request camera and microphone
+    initMedia();
+    overlayStatus.textContent = 'Video Mode: Click "Start Chat"';
+    overlaySub.textContent = 'Encrypted 1-on-1 peer-to-peer connection';
+    setChatStatus('disconnected', 'Video Chat Mode');
+  }
+
+  socket.emit('switch-mode', mode);
+}
+
+modeVideoBtn.addEventListener('click', () => applyMode('video'));
+modeTextBtn.addEventListener('click', () => applyMode('text'));
+
+// ----------------------------------------------------
+// Media Initialization (Video Only)
+// ----------------------------------------------------
 async function initMedia() {
+  if (chatMode !== 'video') return;
   try {
     localStream = await navigator.mediaDevices.getUserMedia({
       video: { width: { ideal: 640 }, height: { ideal: 480 } },
@@ -85,17 +160,105 @@ async function initMedia() {
     localVideo.srcObject = localStream;
   } catch (err) {
     console.warn('Camera/Mic not detected:', err);
-    appendSystemMessage('Camera/Mic permission not granted. You can still use text chat!');
+    appendSystemMessage('⚠️ Camera/Mic not detected or permission denied. You can switch to Text-Only mode anytime!');
   }
 }
 
-// Socket Connection & Registration
+// ----------------------------------------------------
+// Interests & Age Management
+// ----------------------------------------------------
+function updateInterestsUI() {
+  if (activeInterestsCount) {
+    activeInterestsCount.textContent = myInterests.length;
+  }
+  document.querySelectorAll('.interest-chip').forEach(chip => {
+    const tag = chip.getAttribute('data-tag');
+    if (myInterests.includes(tag)) {
+      chip.classList.add('selected');
+    } else {
+      chip.classList.remove('selected');
+    }
+  });
+  if (myAgeInput) myAgeInput.value = myAge;
+}
+
+openInterestsModalBtn.addEventListener('click', () => {
+  updateInterestsUI();
+  interestsModal.style.display = 'flex';
+});
+
+document.querySelectorAll('.interest-chip').forEach(chip => {
+  chip.addEventListener('click', () => {
+    const tag = chip.getAttribute('data-tag');
+    if (myInterests.includes(tag)) {
+      myInterests = myInterests.filter(t => t !== tag);
+      chip.classList.remove('selected');
+    } else {
+      myInterests.push(tag);
+      chip.classList.add('selected');
+    }
+    if (activeInterestsCount) activeInterestsCount.textContent = myInterests.length;
+  });
+});
+
+saveInterestsBtn.addEventListener('click', () => {
+  myAge = parseInt(myAgeInput.value, 10) || 22;
+  localStorage.setItem('clay_my_age', myAge);
+  localStorage.setItem('clay_interests', JSON.stringify(myInterests));
+  interestsModal.style.display = 'none';
+
+  socket.emit('update-preferences', {
+    age: myAge,
+    interests: myInterests,
+    lookingFor: lookingForSelect.value,
+    agePreference: agePreferenceSelect.value
+  });
+  appendSystemMessage(`🏷️ Preferences saved: Age ${myAge}, ${myInterests.length} Interests.`);
+});
+
+// Close modal on click outside
+interestsModal.addEventListener('click', (e) => {
+  if (e.target === interestsModal) interestsModal.style.display = 'none';
+});
+
+// ----------------------------------------------------
+// Dynamic Offers Fetching
+// ----------------------------------------------------
+async function fetchOffers() {
+  try {
+    const res = await fetch('/api/payment/offers');
+    const d = await res.json();
+    if (d.success && d.data) {
+      currentOffers = d.data;
+      if (vipPriceDisplay) vipPriceDisplay.textContent = `₹${currentOffers.vipPrice}`;
+      if (modalVipTitle) modalVipTitle.textContent = currentOffers.title || 'Unlock VIP Membership';
+      if (modalVipDiscountText) modalVipDiscountText.textContent = currentOffers.discountText || 'Instant UPI Activation';
+    }
+  } catch (err) {
+    console.warn('Could not fetch dynamic offers:', err);
+  }
+}
+
+socket.on('offers-updated', (offers) => {
+  currentOffers = offers;
+  if (vipPriceDisplay) vipPriceDisplay.textContent = `₹${offers.vipPrice}`;
+  if (modalVipTitle) modalVipTitle.textContent = offers.title || 'Unlock VIP Membership';
+  if (modalVipDiscountText) modalVipDiscountText.textContent = offers.discountText || 'Instant UPI Activation';
+});
+
+// ----------------------------------------------------
+// Socket Connection & Signaling
+// ----------------------------------------------------
 socket.on('connect', () => {
   console.log('Connected to signaling server with ID:', socket.id);
   socket.emit('init-profile', {
     userId: myUserId,
-    myGender: myGenderSelect.value,
+    myGender: 'male',
     lookingFor: lookingForSelect.value,
+    age: myAge,
+    agePreference: agePreferenceSelect.value,
+    interests: myInterests,
+    chatMode: chatMode,
     isVip: isVip
   });
 });
@@ -104,25 +267,26 @@ socket.on('online-count', (count) => {
   onlineCountEl.textContent = count;
 });
 
-// VIP Activation via Webhook or Polling
 socket.on('vip-activated', (data) => {
   activateVip();
   vipModal.style.display = 'none';
   if (paymentPollInterval) clearInterval(paymentPollInterval);
-  appendSystemMessage('👑 ' + (data.message || 'VIP Plan Activated! You now have Gender Filter access.'));
+  appendSystemMessage('👑 ' + (data.message || 'VIP Plan Activated! Filters unlocked.'));
 });
 
-// Matchmaking Events
 socket.on('waiting', () => {
-  setChatStatus('searching', 'Searching for a stranger...');
-  videoOverlay.style.display = 'flex';
-  loaderAnimation.style.display = 'block';
-  overlayStatus.textContent = 'Looking for someone to chat with...';
-  overlaySub.textContent = lookingForSelect.value !== 'all' 
-    ? `Applying filter: ${lookingForSelect.value.toUpperCase()}`
-    : 'Matching with random online users';
+  setChatStatus('waiting', 'Searching for a stranger...');
+  if (chatMode === 'video') {
+    videoOverlay.style.display = 'flex';
+    loaderAnimation.style.display = 'block';
+    overlayStatus.textContent = 'Searching for a match...';
+    overlaySub.textContent = lookingForSelect.value !== 'all' 
+      ? `Filter: ${lookingForSelect.value.toUpperCase()}`
+      : 'Matching with random online users';
+  }
   partnerBadge.style.display = 'none';
   safetyActions.style.display = 'none';
+  commonInterestsBanner.style.display = 'none';
   messageInput.disabled = true;
   sendBtn.disabled = true;
   startBtnText.textContent = 'Skip';
@@ -130,33 +294,49 @@ socket.on('waiting', () => {
 });
 
 socket.on('matched', async (data) => {
-  console.log('[Match] Connected to stranger:', data);
+  console.log('[Match] Paired with stranger:', data);
   currentRoomId = data.roomId;
   isInitiator = data.isInitiator;
   isConnectedToPartner = true;
 
-  setChatStatus('connected', 'Connected with a Stranger!');
-  videoOverlay.style.display = 'none';
-  loaderAnimation.style.display = 'none';
-  partnerBadge.style.display = 'flex';
-  partnerGenderTag.textContent = data.partnerGender;
+  setChatStatus('connected', data.chatMode === 'text' ? '💬 Connected (Text Chat)' : '📹 Connected (Video Chat)');
+
+  if (data.chatMode === 'video') {
+    videoOverlay.style.display = 'none';
+    loaderAnimation.style.display = 'none';
+    partnerBadge.style.display = 'flex';
+    partnerGenderTag.textContent = data.partnerGender || '';
+    if (data.partnerAge) partnerAgeTag.textContent = `• Age ${data.partnerAge}`;
+  }
+
+  // Display Common Interests Banner
+  if (data.commonInterests && data.commonInterests.length > 0) {
+    commonInterestsBanner.style.display = 'inline-block';
+    commonInterestsBanner.textContent = `🎯 Common: ${data.commonInterests.join(', ')}`;
+  } else {
+    commonInterestsBanner.style.display = 'none';
+  }
+
   safetyActions.style.display = 'flex';
   messageInput.disabled = false;
   sendBtn.disabled = false;
+  messageInput.focus();
   startBtnText.textContent = 'Next';
   stopBtn.style.display = 'inline-block';
 
-  appendSystemMessage("🎉 You're now connected with a stranger! Say hello.");
+  appendSystemMessage(`🎉 Connected with a stranger! ${data.commonInterests && data.commonInterests.length > 0 ? `Both of you like: <strong>${data.commonInterests.join(', ')}</strong>!` : 'Say hello!'}`);
 
-  await setupPeerConnection();
-
-  if (isInitiator) {
-    try {
-      const offer = await peerConnection.createOffer();
-      await peerConnection.setLocalDescription(offer);
-      socket.emit('webrtc-offer', offer);
-    } catch (err) {
-      console.error('Error creating offer:', err);
+  // Only start WebRTC if in video mode
+  if (data.chatMode === 'video') {
+    await setupPeerConnection();
+    if (isInitiator) {
+      try {
+        const offer = await peerConnection.createOffer();
+        await peerConnection.setLocalDescription(offer);
+        socket.emit('webrtc-offer', offer);
+      } catch (err) {
+        console.error('Error creating offer:', err);
+      }
     }
   }
 });
@@ -168,23 +348,27 @@ socket.on('partner-left', (data) => {
 function handlePartnerDisconnect(reason) {
   isConnectedToPartner = false;
   closePeerConnection();
-  setChatStatus('disconnected', 'Stranger has disconnected');
-  videoOverlay.style.display = 'flex';
-  loaderAnimation.style.display = 'none';
-  overlayStatus.textContent = 'Stranger disconnected';
-  overlaySub.textContent = 'Click "Next" to meet someone new';
+  setChatStatus('disconnected', 'Stranger disconnected');
+  if (chatMode === 'video') {
+    videoOverlay.style.display = 'flex';
+    loaderAnimation.style.display = 'none';
+    overlayStatus.textContent = 'Stranger disconnected';
+    overlaySub.textContent = 'Click "Next" to meet someone new';
+  }
   partnerBadge.style.display = 'none';
   safetyActions.style.display = 'none';
+  commonInterestsBanner.style.display = 'none';
   messageInput.disabled = true;
   sendBtn.disabled = true;
   startBtnText.textContent = 'New Chat';
   appendSystemMessage('⚠️ Stranger has disconnected.');
 }
 
+// ----------------------------------------------------
 // WebRTC Signaling
+// ----------------------------------------------------
 async function setupPeerConnection() {
   closePeerConnection();
-
   peerConnection = new RTCPeerConnection(rtcConfig);
 
   if (localStream) {
@@ -211,6 +395,7 @@ async function setupPeerConnection() {
 }
 
 socket.on('webrtc-offer', async (offer) => {
+  if (chatMode !== 'video') return;
   if (!peerConnection) await setupPeerConnection();
   try {
     await peerConnection.setRemoteDescription(new RTCSessionDescription(offer));
@@ -223,6 +408,7 @@ socket.on('webrtc-offer', async (offer) => {
 });
 
 socket.on('webrtc-answer', async (answer) => {
+  if (chatMode !== 'video') return;
   try {
     if (peerConnection) {
       await peerConnection.setRemoteDescription(new RTCSessionDescription(answer));
@@ -233,6 +419,7 @@ socket.on('webrtc-answer', async (answer) => {
 });
 
 socket.on('webrtc-ice-candidate', async (candidate) => {
+  if (chatMode !== 'video') return;
   try {
     if (peerConnection) {
       await peerConnection.addIceCandidate(new RTCIceCandidate(candidate));
@@ -254,7 +441,9 @@ function closePeerConnection() {
   remoteStream = null;
 }
 
+// ----------------------------------------------------
 // Text Messaging
+// ----------------------------------------------------
 chatForm.addEventListener('submit', (e) => {
   e.preventDefault();
   const text = messageInput.value.trim();
@@ -270,7 +459,6 @@ socket.on('receive-message', (data) => {
   appendMessage('Stranger', data.text, 'stranger', data.timestamp);
 });
 
-// Typing indicator
 messageInput.addEventListener('input', () => {
   if (!isConnectedToPartner) return;
   socket.emit('typing', true);
@@ -292,7 +480,7 @@ function appendMessage(sender, text, type, time = null) {
 
   bubble.innerHTML = `
     <div>${escapeHtml(text)}</div>
-    <div class="msg-meta">${displayTime}</div>
+    <div style="font-size: 0.68rem; opacity: 0.7; text-align: right; margin-top: 3px;">${displayTime}</div>
   `;
   messagesContainer.appendChild(bubble);
   messagesContainer.scrollTop = messagesContainer.scrollHeight;
@@ -317,10 +505,10 @@ function setChatStatus(state, text) {
   chatStatusText.textContent = text;
 }
 
+// ----------------------------------------------------
 // User Actions: Start / Next / Stop
-startNextBtn.addEventListener('click', () => {
-  triggerNext();
-});
+// ----------------------------------------------------
+startNextBtn.addEventListener('click', triggerNext);
 
 function triggerNext() {
   closePeerConnection();
@@ -331,22 +519,22 @@ stopBtn.addEventListener('click', () => {
   closePeerConnection();
   socket.emit('stop-chat');
   setChatStatus('disconnected', 'Disconnected');
-  videoOverlay.style.display = 'flex';
-  loaderAnimation.style.display = 'none';
-  overlayStatus.textContent = 'Chat stopped';
-  overlaySub.textContent = 'Click "Start Chat" to find a new stranger';
+  if (chatMode === 'video') {
+    videoOverlay.style.display = 'flex';
+    loaderAnimation.style.display = 'none';
+    overlayStatus.textContent = 'Chat stopped';
+    overlaySub.textContent = 'Click "Start Chat" to find a new stranger';
+  }
   startBtnText.textContent = 'Start Chat';
   stopBtn.style.display = 'none';
   safetyActions.style.display = 'none';
+  commonInterestsBanner.style.display = 'none';
   messageInput.disabled = true;
   sendBtn.disabled = true;
 });
 
-// Keyboard Shortcut: Esc to Skip/Next
 window.addEventListener('keydown', (e) => {
-  if (e.key === 'Escape') {
-    triggerNext();
-  }
+  if (e.key === 'Escape') triggerNext();
 });
 
 // Media Controls: Cam & Mic
@@ -370,23 +558,28 @@ toggleMicBtn.addEventListener('click', () => {
   }
 });
 
-// Preferences change
-myGenderSelect.addEventListener('change', () => {
-  socket.emit('update-preferences', { myGender: myGenderSelect.value });
-});
-
+// Filters changes
 lookingForSelect.addEventListener('change', () => {
   if (lookingForSelect.value !== 'all' && !isVip) {
     openVipModal();
-    lookingForSelect.value = 'all'; // reset until upgraded
+    lookingForSelect.value = 'all';
   } else {
     socket.emit('update-preferences', { lookingFor: lookingForSelect.value });
   }
 });
 
+agePreferenceSelect.addEventListener('change', () => {
+  if (agePreferenceSelect.value !== 'all' && !isVip) {
+    openVipModal();
+    agePreferenceSelect.value = 'all';
+  } else {
+    socket.emit('update-preferences', { agePreference: agePreferenceSelect.value });
+  }
+});
+
 // Safety: Block User
 blockBtn.addEventListener('click', () => {
-  if (confirm('Are you sure you want to block this user? You will never be matched with them again.')) {
+  if (confirm('Block this user? You will never be matched with them again.')) {
     socket.emit('block-user');
     appendSystemMessage('🚫 You blocked this user. Finding someone else...');
   }
@@ -408,16 +601,21 @@ confirmReportBtn.addEventListener('click', () => {
   appendSystemMessage(`🚨 Report submitted for "${selectedReason}". User blocked.`);
 });
 
-// VIP / UroPay Modal Logic
+// Moderation Warning from Server
+socket.on('moderation-warning', (data) => {
+  alert(data.message || 'Account restricted by moderation.');
+});
+
+// ----------------------------------------------------
+// VIP Subscription & Payment Flow (₹20 UPI VPA LIGHT.LTD)
+// ----------------------------------------------------
 function openVipModal() {
   vipPlanStep.style.display = 'block';
   vipQrStep.style.display = 'none';
   vipModal.style.display = 'flex';
 }
 
-vipBadgeBtn.addEventListener('click', () => {
-  openVipModal();
-});
+vipBadgeBtn.addEventListener('click', openVipModal);
 
 closeVipModalBtn.addEventListener('click', () => {
   vipModal.style.display = 'none';
@@ -430,43 +628,42 @@ backToPlansBtn.addEventListener('click', () => {
   if (paymentPollInterval) clearInterval(paymentPollInterval);
 });
 
-// 1. Generate Order & Display QR
 startUpiPayBtn.addEventListener('click', async () => {
   try {
     startUpiPayBtn.textContent = 'Generating QR...';
     startUpiPayBtn.disabled = true;
+
+    const price = currentOffers ? currentOffers.vipPrice : 20;
 
     const res = await fetch('/api/uropay/create-order', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
         userId: myUserId,
-        amount: 100, // ₹1 (100 paise)
-        customerName: 'Clay Chat User',
-        customerEmail: 'user@claychat.app'
+        amount: price * 100, // paise
+        customerName: 'Clay Chat Member',
+        customerEmail: 'member@claychat.app'
       })
     });
 
     const result = await res.json();
     if (result.success && result.data) {
-      const { qrCode, upiString, amountInRupees, uroPayOrderId, vpa, vpaName } = result.data;
+      const { qrCodeBase64, paymentLink, amountRupees, uroPayOrderId, vpa, vpaName } = result.data;
       currentUroPayOrderId = uroPayOrderId;
 
-      upiQrImage.src = qrCode;
-      upiAmountText.textContent = `₹${amountInRupees}`;
-      upiIntentBtn.href = upiString;
+      upiQrImage.src = qrCodeBase64;
+      upiAmountText.textContent = `₹${amountRupees}`;
+      upiIntentBtn.href = paymentLink;
 
-      const payeeEl = document.getElementById('upiPayeeText');
-      if (payeeEl && vpa) {
-        payeeEl.textContent = `${vpaName || 'Dhinakar Sivakumar'} (${vpa})`;
+      if (upiPayeeText && vpa) {
+        upiPayeeText.textContent = `${vpaName || 'LIGHT.LTD'} (${vpa})`;
       }
 
       vipPlanStep.style.display = 'none';
       vipQrStep.style.display = 'block';
-      utrStatusMsg.textContent = 'Scan QR & pay. Then enter the 12-digit UTR below.';
+      utrStatusMsg.textContent = 'Scan QR & pay. Auto-activated on GPay confirmation, or enter UTR.';
       utrStatusMsg.style.color = 'var(--text-muted)';
 
-      // Start automatic polling every 3.5 seconds
       startStatusPolling(uroPayOrderId);
     } else {
       alert(result.message || 'Could not generate UPI order.');
@@ -480,11 +677,10 @@ startUpiPayBtn.addEventListener('click', async () => {
   }
 });
 
-// 2. Submit UTR / Reference Number
 submitUtrBtn.addEventListener('click', async () => {
   const utr = utrInput.value.trim();
-  if (!utr || utr.length < 8) {
-    alert('Please enter a valid 12-digit UPI Reference / UTR Number.');
+  if (!utr || utr.length < 6) {
+    alert('Please enter a valid UPI Reference / UTR Number.');
     return;
   }
 
@@ -493,11 +689,11 @@ submitUtrBtn.addEventListener('click', async () => {
 
   try {
     const res = await fetch('/api/uropay/submit-utr', {
-      method: 'PATCH',
+      method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
         uroPayOrderId: currentUroPayOrderId,
-        referenceNumber: utr,
+        utr: utr,
         userId: myUserId
       })
     });
@@ -520,7 +716,6 @@ submitUtrBtn.addEventListener('click', async () => {
   }
 });
 
-// 3. Poll Status
 function startStatusPolling(orderId) {
   if (paymentPollInterval) clearInterval(paymentPollInterval);
 
@@ -528,11 +723,11 @@ function startStatusPolling(orderId) {
     try {
       const res = await fetch(`/api/uropay/status/${orderId}`);
       const data = await res.json();
-      if (data.data && (data.data.orderStatus === 'COMPLETED' || data.data.orderStatus === 'UTR_SUBMITTED')) {
+      if (data.data && data.data.orderStatus === 'COMPLETED') {
         clearInterval(paymentPollInterval);
         activateVip();
         vipModal.style.display = 'none';
-        alert('🎉 Payment verified! VIP Membership Activated!');
+        alert('🎉 Payment confirmed! VIP Membership Activated!');
       }
     } catch (e) {
       console.warn('Poll error:', e);
@@ -542,7 +737,7 @@ function startStatusPolling(orderId) {
 
 function activateVip() {
   isVip = true;
-  try { localStorage.setItem('stranger_is_vip', 'true'); } catch(e){}
+  try { localStorage.setItem('clay_is_vip', 'true'); } catch(e){}
   vipBadgeBtn.classList.add('active');
   vipBtnText.textContent = 'VIP Active';
   socket.emit('update-preferences', { isVip: true });
@@ -553,12 +748,13 @@ function activateVip() {
   if (maleOpt) maleOpt.textContent = 'Male ♂ (Unlocked ⭐)';
 }
 
-// Restore VIP from localStorage if previously activated
-if (localStorage.getItem('stranger_is_vip') === 'true') {
+if (localStorage.getItem('clay_is_vip') === 'true' || localStorage.getItem('stranger_is_vip') === 'true') {
   activateVip();
 }
 
+// ----------------------------------------------------
 // Google Authentication
+// ----------------------------------------------------
 let currentGoogleUser = null;
 const googleSignInBtn = document.getElementById('googleSignInBtn');
 const userProfileBadge = document.getElementById('userProfileBadge');
@@ -566,44 +762,11 @@ const userAvatarImg = document.getElementById('userAvatarImg');
 const userProfileName = document.getElementById('userProfileName');
 const logoutBtn = document.getElementById('logoutBtn');
 
-// Login Modal Elements
-const loginModal = document.getElementById('loginModal');
-const closeLoginModalBtn = document.getElementById('closeLoginModalBtn');
-const googleCustomBtn = document.getElementById('googleCustomBtn');
-const guestContinueBtn = document.getElementById('guestContinueBtn');
-
-if (closeLoginModalBtn) {
-  closeLoginModalBtn.addEventListener('click', () => {
-    loginModal.style.display = 'none';
-  });
-}
-
-if (guestContinueBtn) {
-  guestContinueBtn.addEventListener('click', () => {
-    loginModal.style.display = 'none';
-  });
-}
-
-if (googleCustomBtn) {
-  googleCustomBtn.addEventListener('click', () => {
-    if (window.google) {
-      google.accounts.id.prompt((notification) => {
-        if (notification.isNotDisplayed() || notification.isSkippedMoment()) {
-          // If One-Tap is blocked by browser, trigger standard Google OAuth flow or simulation
-          console.log('One-tap dismissed or blocked, prompt alternative');
-        }
-      });
-    }
-  });
-}
-
 function parseJwt(token) {
   try {
     const base64Url = token.split('.')[1];
     const base64 = base64Url.replace(/-/g, '+').replace(/_/g, '/');
-    const jsonPayload = decodeURIComponent(atob(base64).split('').map(function(c) {
-      return '%' + ('00' + c.charCodeAt(0).toString(16)).slice(-2);
-    }).join(''));
+    const jsonPayload = decodeURIComponent(atob(base64).split('').map(c => '%' + ('00' + c.charCodeAt(0).toString(16)).slice(-2)).join(''));
     return JSON.parse(jsonPayload);
   } catch(e) {
     return null;
@@ -628,15 +791,6 @@ async function initGoogleAuth() {
           googleSignInBtn,
           { theme: 'outline', size: 'small', shape: 'pill', text: 'signin' }
         );
-      }
-
-      const modalBtn = document.getElementById('googleModalSignInBtn');
-      if (modalBtn) {
-        google.accounts.id.renderButton(
-          modalBtn,
-          { theme: 'filled_blue', size: 'large', shape: 'pill', width: 280, text: 'continue_with' }
-        );
-        if (googleCustomBtn) googleCustomBtn.style.display = 'none';
       }
     }
   } catch (err) {
@@ -663,7 +817,6 @@ async function handleGoogleLoginResponse(response) {
     const data = await res.json();
     if (data.success && data.user) {
       applyUserProfile(data.user);
-      if (loginModal) loginModal.style.display = 'none';
     }
   } catch (err) {
     console.error('Google login backend sync failed:', err);
@@ -678,9 +831,7 @@ function applyUserProfile(user) {
   if (userAvatarImg) userAvatarImg.src = user.picture || 'https://www.gravatar.com/avatar/?d=mp';
   if (userProfileName) userProfileName.textContent = user.name || user.email;
 
-  if (user.isVip) {
-    activateVip();
-  }
+  if (user.isVip) activateVip();
   appendSystemMessage(`👋 Signed in as ${user.name || user.email}!`);
 }
 
@@ -690,32 +841,24 @@ if (logoutBtn) {
     currentGoogleUser = null;
     if (googleSignInBtn) googleSignInBtn.style.display = 'block';
     if (userProfileBadge) userProfileBadge.style.display = 'none';
-    if (window.google) {
-      google.accounts.id.disableAutoSelect();
-    }
+    if (window.google) google.accounts.id.disableAutoSelect();
     appendSystemMessage('Signed out of Google.');
   });
 }
 
-// Restore saved user if any
 const savedGoogleUser = localStorage.getItem('clay_google_user');
 if (savedGoogleUser) {
   try {
     applyUserProfile(JSON.parse(savedGoogleUser));
   } catch(e){}
-} else {
-  // Show login modal on first visit for guest/login option
-  setTimeout(() => {
-    if (!currentGoogleUser && loginModal) {
-      loginModal.style.display = 'flex';
-    }
-  }, 1000);
 }
 
-// Call initGoogleAuth when window loads
+// ----------------------------------------------------
+// App Boot
+// ----------------------------------------------------
 window.addEventListener('load', () => {
+  fetchOffers();
+  updateInterestsUI();
+  applyMode(chatMode);
   setTimeout(initGoogleAuth, 600);
 });
-
-// Start Media on page load
-initMedia();

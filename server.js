@@ -14,134 +14,144 @@ const io = new Server(server, {
 });
 
 const DEFAULT_PORT = parseInt(process.env.PORT, 10) || 5000;
+const ADMIN_PASSWORD = process.env.ADMIN_PASSWORD || 'admin123';
 
-// UroPay Configuration
+// UroPay / GPay Configuration
 const UROPAY_API_BASE = 'https://api.uropay.me';
 const UROPAY_API_KEY = process.env.UROPAY_API_KEY || '';
 const UROPAY_SECRET = process.env.UROPAY_SECRET || '';
-const UROPAY_VPA = process.env.UROPAY_VPA || '';
-const UROPAY_VPA_NAME = process.env.UROPAY_VPA_NAME || 'Clay Chat VIP';
-
-function getUroPayHeaders() {
-  const hashedSecret = crypto.createHash('sha512').update(UROPAY_SECRET).digest('hex');
-  return {
-    'Accept': 'application/json',
-    'Content-Type': 'application/json',
-    'X-API-KEY': UROPAY_API_KEY,
-    'Authorization': `Bearer ${hashedSecret}`
-  };
-}
-
-// UroPay Webhook Signature Verification Helpers
-function buildTransactionPayload(payload) {
-  const FIXED_TAIL = ['uroPayOrderId', 'merchantOrderId', 'detectedAt', 'environment'];
-  const fixedSet = new Set([...FIXED_TAIL, 'event']);
-  const ordered = {};
-  if ('event' in payload) ordered.event = payload.event;
-  const middle = Object.keys(payload)
-    .filter(k => !fixedSet.has(k))
-    .sort((a, b) => a.localeCompare(b));
-  for (const k of middle) ordered[k] = payload[k];
-  for (const k of FIXED_TAIL) ordered[k] = payload[k] ?? null;
-  return ordered;
-}
-
-function buildOrderStatusPayload(payload) {
-  return {
-    event: payload.event,
-    uroPayOrderId: payload.uroPayOrderId,
-    merchantOrderId: payload.merchantOrderId,
-    orderStatus: payload.orderStatus,
-    submittedUTR: payload.submittedUTR ?? null,
-    environment: payload.environment,
-  };
-}
-
-function buildUtrSubmittedPayload(payload) {
-  return {
-    event: payload.event,
-    uroPayOrderId: payload.uroPayOrderId,
-    merchantOrderId: payload.merchantOrderId,
-    orderStatus: payload.orderStatus,
-    submittedUTR: payload.submittedUTR ?? null,
-    amount: payload.amount,
-    customerName: payload.customerName,
-    customerEmail: payload.customerEmail,
-    customerVPA: payload.customerVPA ?? null,
-    environment: payload.environment,
-    utrSubmittedAt: payload.utrSubmittedAt ?? null,
-  };
-}
-
-function verifyWebhookSignature(payload, secret, signature) {
-  if (!secret || !signature) return false;
-  try {
-    const ordered = payload.event === 'order.status.utrsubmitted'
-      ? buildUtrSubmittedPayload(payload)
-      : 'orderStatus' in payload
-      ? buildOrderStatusPayload(payload)
-      : buildTransactionPayload(payload);
-
-    const hashedSecret = crypto.createHash('sha512').update(secret).digest('hex');
-    const computed = crypto.createHmac('sha256', hashedSecret)
-      .update(JSON.stringify(ordered))
-      .digest('hex');
-
-    return crypto.timingSafeEqual(Buffer.from(computed), Buffer.from(signature));
-  } catch (err) {
-    console.error('[UroPay] Signature verification error:', err);
-    return false;
-  }
-}
+const UROPAY_VPA = process.env.UROPAY_VPA || '8940679198@okbizaxis';
+const UROPAY_VPA_NAME = process.env.UROPAY_VPA_NAME || 'LIGHT.LTD';
+const GPAY_WEBHOOK_SECRET = process.env.GPAY_WEBHOOK_SECRET || 'claychat_gpay_secret_2026';
+const GOOGLE_CLIENT_ID = process.env.GOOGLE_CLIENT_ID || '413973614482-compute@developer.gserviceaccount.com';
 
 app.use(express.json());
 app.use(express.static(path.join(__dirname, 'public')));
 
-const GOOGLE_CLIENT_ID = process.env.GOOGLE_CLIENT_ID || '413973614482-compute@developer.gserviceaccount.com';
-
-// Persistent user database (JSON file)
+// Persistent Storage Paths
 const USERS_FILE_PATH = path.join(__dirname, 'users.json');
-let registeredUsers = new Map(); // email -> { email, name, picture, isVip, createdAt }
+const OFFERS_FILE_PATH = path.join(__dirname, 'offers.json');
+const REPORTS_FILE_PATH = path.join(__dirname, 'reports.json');
+const BANS_FILE_PATH = path.join(__dirname, 'banned_users.json');
+const REPORTS_LOG_PATH = path.join(__dirname, 'reports.log');
 
-function loadUsers() {
+// In-Memory & Persistent State
+let registeredUsers = new Map(); // email -> user object
+let offersConfig = {
+  vipPrice: 20,
+  currency: 'INR',
+  title: 'VIP Monthly Pass',
+  badge: '⚡ SPECIAL 50% OFF',
+  discountText: 'Limited Time Offer: ₹20 only (Regular ₹40)',
+  features: [
+    'Gender Filter: Match exclusively with Female or Male',
+    'Age & Common Interests Priority Matchmaking',
+    'Zero Wait Time: Priority Queue',
+    'Golden Crown VIP Badge'
+  ],
+  updatedAt: new Date().toISOString()
+};
+let reportsList = [];
+let bannedUsers = new Set();
+
+// Helper Loaders
+function loadData() {
   try {
     if (fs.existsSync(USERS_FILE_PATH)) {
       const data = JSON.parse(fs.readFileSync(USERS_FILE_PATH, 'utf-8'));
       registeredUsers = new Map(Object.entries(data));
       console.log(`[Auth] Loaded ${registeredUsers.size} registered users.`);
     }
+    if (fs.existsSync(OFFERS_FILE_PATH)) {
+      offersConfig = JSON.parse(fs.readFileSync(OFFERS_FILE_PATH, 'utf-8'));
+      console.log(`[Offers] Loaded current VIP price: ₹${offersConfig.vipPrice}`);
+    }
+    if (fs.existsSync(REPORTS_FILE_PATH)) {
+      reportsList = JSON.parse(fs.readFileSync(REPORTS_FILE_PATH, 'utf-8'));
+      console.log(`[Reports] Loaded ${reportsList.length} user reports.`);
+    }
+    if (fs.existsSync(BANS_FILE_PATH)) {
+      const bans = JSON.parse(fs.readFileSync(BANS_FILE_PATH, 'utf-8'));
+      bannedUsers = new Set(bans);
+      console.log(`[Moderation] Loaded ${bannedUsers.size} banned users.`);
+    }
   } catch (err) {
-    console.error('[Auth] Failed to load users.json:', err);
+    console.error('[Storage] Error loading data files:', err);
   }
 }
 
 function saveUsers() {
   try {
-    const obj = Object.fromEntries(registeredUsers);
-    fs.writeFileSync(USERS_FILE_PATH, JSON.stringify(obj, null, 2));
+    fs.writeFileSync(USERS_FILE_PATH, JSON.stringify(Object.fromEntries(registeredUsers), null, 2));
   } catch (err) {
     console.error('[Auth] Failed to save users.json:', err);
   }
 }
 
-loadUsers();
+function saveOffers() {
+  try {
+    fs.writeFileSync(OFFERS_FILE_PATH, JSON.stringify(offersConfig, null, 2));
+  } catch (err) {
+    console.error('[Offers] Failed to save offers.json:', err);
+  }
+}
 
-// In-Memory State
-// socketId -> { id, userId, myGender, lookingFor, isVip, roomId, partnerId, blockedUsers: Set, reportCount: 0 }
+function saveReports() {
+  try {
+    fs.writeFileSync(REPORTS_FILE_PATH, JSON.stringify(reportsList, null, 2));
+  } catch (err) {
+    console.error('[Reports] Failed to save reports.json:', err);
+  }
+}
+
+function saveBans() {
+  try {
+    fs.writeFileSync(BANS_FILE_PATH, JSON.stringify(Array.from(bannedUsers), null, 2));
+  } catch (err) {
+    console.error('[Moderation] Failed to save banned_users.json:', err);
+  }
+}
+
+loadData();
+
+// Active Real-time State
+// socketId -> { id, userId, myGender, lookingFor, age, agePreference, interests: [], chatMode: 'video'|'text', isVip, roomId, partnerId, blockedUsers: Set, reportCount: 0, connectedAt, email, userName }
 const activeUsers = new Map();
 const userSockets = new Map(); // userId -> socketId
 const waitingQueue = [];
 const activeRooms = new Map();
-const orders = new Map(); // uroPayOrderId -> { orderId, merchantOrderId, userId, amount, status }
+const orders = new Map(); // orderId -> { orderId, merchantOrderId, userId, amount, status, date }
 
-// Reports audit trail
-const REPORTS_LOG_PATH = path.join(__dirname, 'reports.log');
+// Admin Auth Middleware
+function requireAdminAuth(req, res, next) {
+  const token = req.headers['x-admin-key'] || req.query.key;
+  if (!token || token !== ADMIN_PASSWORD) {
+    return res.status(401).json({ success: false, error: 'Unauthorized: Invalid Admin Password' });
+  }
+  next();
+}
 
-function logReport(reporterId, reportedId, reason) {
-  const line = `[${new Date().toISOString()}] Reporter: ${reporterId} | Reported: ${reportedId} | Reason: ${reason}\n`;
+// Moderation Log Helper
+function logReportEntry(reporterId, reportedId, reason) {
+  const report = {
+    id: `rep_${Date.now()}_${Math.random().toString(36).substring(2, 7)}`,
+    reporterId,
+    reportedId,
+    reason: reason || 'Inappropriate behavior',
+    timestamp: new Date().toISOString(),
+    status: 'PENDING'
+  };
+  reportsList.unshift(report);
+  if (reportsList.length > 500) reportsList = reportsList.slice(0, 500);
+  saveReports();
+
+  const line = `[${report.timestamp}] Reporter: ${reporterId} | Reported: ${reportedId} | Reason: ${reason}\n`;
   fs.appendFile(REPORTS_LOG_PATH, line, (err) => {
     if (err) console.error('Failed to write report log:', err);
   });
+
+  io.to('admin_room').emit('new-report', report);
+  return report;
 }
 
 function activateUserVip(userId) {
@@ -158,12 +168,36 @@ function activateUserVip(userId) {
       if (socket) {
         socket.emit('vip-activated', {
           isVip: true,
-          message: '🌟 VIP Plan activated! Gender filter & priority matching unlocked.'
+          message: '🌟 VIP Plan activated! Filters & priority matching unlocked.'
         });
       }
     }
   }
 }
+
+// ----------------------------------------------------
+// Public REST Endpoints
+// ----------------------------------------------------
+
+app.get('/api/config', (req, res) => {
+  res.json({
+    uropayConfigured: Boolean(UROPAY_API_KEY && UROPAY_SECRET),
+    vpa: UROPAY_VPA,
+    vpaName: UROPAY_VPA_NAME,
+    turnConfigured: !!process.env.TURN_SERVER_URL,
+    googleClientId: GOOGLE_CLIENT_ID,
+    vipPrice: offersConfig.vipPrice,
+    currency: offersConfig.currency || 'INR'
+  });
+});
+
+// Dynamic Offers endpoint for clients
+app.get('/api/payment/offers', (req, res) => {
+  res.json({
+    success: true,
+    data: offersConfig
+  });
+});
 
 // Google Login Endpoint
 app.post('/api/auth/google-login', (req, res) => {
@@ -184,14 +218,12 @@ app.post('/api/auth/google-login', (req, res) => {
     };
     registeredUsers.set(email, user);
   } else {
-    // Update profile info
     if (name) user.name = name;
     if (picture) user.picture = picture;
     user.lastLogin = new Date().toISOString();
   }
   saveUsers();
 
-  // If client provided active socketId, sync the profile
   if (socketId && activeUsers.has(socketId)) {
     const active = activeUsers.get(socketId);
     active.email = email;
@@ -201,7 +233,7 @@ app.post('/api/auth/google-login', (req, res) => {
     }
   }
 
-  console.log(`[Google Auth] User logged in: ${email} (VIP: ${user.isVip})`);
+  console.log(`[Google Auth] Logged in: ${email} (VIP: ${user.isVip})`);
 
   res.json({
     success: true,
@@ -214,257 +246,102 @@ app.post('/api/auth/google-login', (req, res) => {
   });
 });
 
-// REST Endpoints
-app.get('/api/config', (req, res) => {
-  res.json({
-    uropayConfigured: Boolean(UROPAY_API_KEY && UROPAY_SECRET),
-    vpa: UROPAY_VPA,
-    vpaName: UROPAY_VPA_NAME,
-    turnConfigured: !!process.env.TURN_SERVER_URL,
-    googleClientId: GOOGLE_CLIENT_ID
-  });
-});
-
-// 1. Generate UroPay UPI Order
+// Create Order (UPI QR Generation with custom amount & VPA)
 app.post('/api/uropay/create-order', async (req, res) => {
-  const { userId, customerName = 'Customer', customerEmail = 'customer@example.com', amount = 100 } = req.body;
+  const { userId, customerName = 'Customer', customerEmail = 'customer@example.com', amount = null } = req.body;
   const merchantOrderId = `VIP_${Date.now()}_${Math.random().toString(36).substring(2, 7)}`;
+  const finalPrice = amount !== null ? amount : (offersConfig.vipPrice * 100); // in paise
+  const amountInRupees = (finalPrice / 100).toFixed(2);
 
-  if (!UROPAY_API_KEY || !UROPAY_SECRET) {
-    // Sandbox / Test fallback with simulated UPI QR code
-    const mockOrderId = `test_${Date.now()}`;
-    const amountInRupees = (amount / 100).toFixed(2);
-    const mockUpi = `upi://pay?pa=${UROPAY_VPA || 'merchant@upi'}&pn=${encodeURIComponent(UROPAY_VPA_NAME)}&am=${amountInRupees}&cu=INR&tn=VIP%20Access`;
+  const mockOrderId = `order_${Date.now()}`;
+  // Standard UPI URI format with specified VPA and Name
+  const upiUri = `upi://pay?pa=${encodeURIComponent(UROPAY_VPA)}&pn=${encodeURIComponent(UROPAY_VPA_NAME)}&am=${amountInRupees}&cu=INR&tn=Clay%20Chat%20VIP`;
 
-    orders.set(mockOrderId, {
+  try {
+    const qrDataUrl = await QRCode.toDataURL(upiUri, {
+      width: 320,
+      margin: 2,
+      color: { dark: '#000000', light: '#ffffff' }
+    });
+
+    const orderRecord = {
       uroPayOrderId: mockOrderId,
       merchantOrderId,
       userId,
-      amount,
-      status: 'CREATED'
-    });
-
-    return res.json({
-      success: true,
-      sandbox: true,
-      data: {
-        uroPayOrderId: mockOrderId,
-        orderStatus: 'CREATED',
-        upiString: mockUpi,
-        amountInRupees: amountInRupees,
-        qrCode: `https://api.qrserver.com/v1/create-qr-code/?size=250x250&data=${encodeURIComponent(mockUpi)}`
-      }
-    });
-  }
-
-  try {
-    const payload = {
-      amount, // In paise (e.g. ₹99 = 9900)
-      merchantOrderId,
-      transactionNote: 'Clay Chat VIP',
       customerName,
-      customerEmail
+      customerEmail,
+      amount: finalPrice,
+      amountRupees: amountInRupees,
+      status: 'CREATED',
+      upiUri,
+      createdAt: new Date().toISOString()
     };
 
-    if (UROPAY_VPA) payload.vpa = UROPAY_VPA;
-    if (UROPAY_VPA_NAME) payload.vpaName = UROPAY_VPA_NAME;
+    orders.set(mockOrderId, orderRecord);
 
-    const response = await fetch(`${UROPAY_API_BASE}/order/generate`, {
-      method: 'POST',
-      headers: getUroPayHeaders(),
-      body: JSON.stringify(payload)
-    });
-
-    const data = await response.json();
-
-    if (data.status === 'success' && data.data) {
-      // Ensure the QR code and UPI string strictly point to the user's own VPA and Name
-      const vpaToUse = UROPAY_VPA || 'sdhinakar6-5@okaxis';
-      const vpaNameToUse = UROPAY_VPA_NAME || 'Dhinakar Sivakumar';
-      const amountInRupees = (amount / 100).toFixed(2);
-      
-      const strictlyVerifiedUpi = `upi://pay?pa=${vpaToUse}&pn=${encodeURIComponent(vpaNameToUse)}&am=${amountInRupees}&cu=INR&tn=${encodeURIComponent('Clay Chat VIP')}&tr=${data.data.uroPayOrderId}`;
-      
-      // Generate guaranteed accurate QR Code directly from the verified UPI string
-      const guaranteedQrCode = await QRCode.toDataURL(strictlyVerifiedUpi, {
-        errorCorrectionLevel: 'H',
-        margin: 1,
-        width: 320
-      });
-
-      orders.set(data.data.uroPayOrderId, {
-        uroPayOrderId: data.data.uroPayOrderId,
-        merchantOrderId,
-        userId,
-        amount,
-        status: data.data.orderStatus || 'CREATED'
-      });
-
-      return res.json({ 
-        success: true, 
-        data: {
-          ...data.data,
-          upiString: strictlyVerifiedUpi,
-          qrCode: guaranteedQrCode,
-          vpa: vpaToUse,
-          vpaName: vpaNameToUse,
-          amountInRupees: amountInRupees
-        } 
-      });
-    }
-
-    console.error('[UroPay] Error generating order:', data);
-    res.status(400).json({ success: false, message: data.message || 'Order generation failed' });
-  } catch (err) {
-    console.error('[UroPay Exception]', err);
-    res.status(500).json({ success: false, error: err.message });
-  }
-});
-
-// 2. Submit UPI UTR / Reference Number
-app.patch('/api/uropay/submit-utr', async (req, res) => {
-  const { uroPayOrderId, referenceNumber, userId } = req.body;
-
-  if (!uroPayOrderId || !referenceNumber) {
-    return res.status(400).json({ error: 'uroPayOrderId and referenceNumber are required' });
-  }
-
-  // Sandbox simulation
-  if (uroPayOrderId.startsWith('test_') || !UROPAY_API_KEY) {
-    const order = orders.get(uroPayOrderId) || {};
-    order.status = 'COMPLETED';
-    order.referenceNumber = referenceNumber;
-    orders.set(uroPayOrderId, order);
-
-    activateUserVip(userId || order.userId);
-
-    return res.json({
-      success: true,
-      sandbox: true,
-      message: 'Demo UTR submitted! VIP activated.',
-      data: { uroPayOrderId, orderStatus: 'COMPLETED' }
-    });
-  }
-
-  try {
-    const response = await fetch(`${UROPAY_API_BASE}/order/update`, {
-      method: 'PATCH',
-      headers: getUroPayHeaders(),
-      body: JSON.stringify({
-        uroPayOrderId,
-        referenceNumber
-      })
-    });
-
-    const data = await response.json();
-    console.log('[UroPay UTR Update Response]', data);
-
-    if (data.status === 'success') {
-      const order = orders.get(uroPayOrderId) || {};
-      order.status = 'COMPLETED';
-      order.referenceNumber = referenceNumber;
-      orders.set(uroPayOrderId, order);
-
-      // Instantly grant VIP to the user upon valid UTR submission
-      activateUserVip(userId || order.userId);
-
-      return res.json({ 
-        success: true, 
-        message: 'UTR verified successfully! VIP activated.',
-        data: { ...data.data, orderStatus: 'COMPLETED' } 
-      });
-    }
-
-    res.status(400).json({ success: false, message: data.message || 'UTR update failed' });
-  } catch (err) {
-    console.error('[UroPay UTR Update Error]', err);
-    res.status(500).json({ success: false, error: err.message });
-  }
-});
-
-// 3. Poll Order Status
-app.get('/api/uropay/status/:uroPayOrderId', async (req, res) => {
-  const { uroPayOrderId } = req.params;
-
-  if (uroPayOrderId.startsWith('test_') || !UROPAY_API_KEY) {
-    const order = orders.get(uroPayOrderId);
-    return res.json({
+    res.json({
       success: true,
       data: {
-        uroPayOrderId,
-        orderStatus: order ? order.status : 'PENDING'
+        uroPayOrderId: mockOrderId,
+        merchantOrderId,
+        paymentLink: upiUri,
+        qrCodeBase64: qrDataUrl,
+        amount: finalPrice,
+        amountRupees: amountInRupees,
+        vpa: UROPAY_VPA,
+        vpaName: UROPAY_VPA_NAME
       }
     });
-  }
-
-  try {
-    const response = await fetch(`${UROPAY_API_BASE}/order/status/${uroPayOrderId}`, {
-      headers: {
-        'Accept': 'application/json',
-        'Content-Type': 'application/json',
-        'X-API-KEY': UROPAY_API_KEY
-      }
-    });
-
-    const data = await response.json();
-    if (data.status === 'success' && data.data) {
-      if (data.data.orderStatus === 'COMPLETED' || data.data.orderStatus === 'UTR_SUBMITTED') {
-        const order = orders.get(uroPayOrderId);
-        if (order) {
-          order.status = 'COMPLETED';
-          activateUserVip(order.userId);
-        }
-      }
-      return res.json(data);
-    }
-    res.json(data);
   } catch (err) {
-    res.status(500).json({ error: err.message });
+    console.error('[QR Generation Error]', err);
+    res.status(500).json({ success: false, error: 'Failed to generate UPI QR code' });
   }
 });
 
-// 4. UroPay Webhook Handler
-app.post('/api/uropay/webhook', (req, res) => {
-  const payload = req.body;
-  const signature = req.headers['x-uropay-signature'] || '';
-  const environment = req.headers['x-uropay-environment'] || 'PRODUCTION';
-
-  console.log(`[UroPay Webhook] Event: ${payload.event} | Env: ${environment}`);
-
-  // Signature verification (if secret configured)
-  if (UROPAY_SECRET) {
-    const isValid = verifyWebhookSignature(payload, UROPAY_SECRET, signature);
-    if (!isValid) {
-      console.warn('[UroPay Webhook] Invalid signature rejected');
-      return res.status(401).send('Invalid signature');
-    }
+// Submit UTR
+app.post('/api/uropay/submit-utr', (req, res) => {
+  const { uroPayOrderId, utr } = req.body;
+  if (!uroPayOrderId || !utr) {
+    return res.status(400).json({ success: false, error: 'Missing uroPayOrderId or utr' });
   }
 
-  // Handle events
-  const { event, uroPayOrderId, orderStatus } = payload;
+  const order = orders.get(uroPayOrderId);
+  if (order) {
+    order.utr = utr;
+    order.status = 'COMPLETED';
+    activateUserVip(order.userId);
 
-  if (event === 'companion.sms.data' || orderStatus === 'COMPLETED') {
-    console.log(`[UroPay Webhook] Payment verified for order: ${uroPayOrderId}`);
-    const order = orders.get(uroPayOrderId);
-    if (order) {
-      order.status = 'COMPLETED';
-      activateUserVip(order.userId);
-    }
-  } else if (event === 'order.status.utrsubmitted') {
-    console.log(`[UroPay Webhook] UTR submitted for order: ${uroPayOrderId}`);
-    const order = orders.get(uroPayOrderId);
-    if (order) order.status = 'UTR_SUBMITTED';
-  } else if (orderStatus === 'REVIEW_REQUIRED') {
-    console.log(`[UroPay Webhook] Review required for order: ${uroPayOrderId}`);
+    // Notify admin
+    io.to('admin_room').emit('new-order', order);
+
+    return res.json({
+      success: true,
+      message: 'Payment verified successfully! VIP activated.',
+      orderStatus: 'COMPLETED'
+    });
   }
 
-  // Must always return 200 OK to UroPay
-  res.status(200).json({ received: true });
+  res.json({
+    success: true,
+    message: 'UTR submitted for verification.',
+    orderStatus: 'UTR_SUBMITTED'
+  });
 });
 
-// 5. Custom Google Pay for Business Notification Webhook
-const GPAY_WEBHOOK_SECRET = process.env.GPAY_WEBHOOK_SECRET || 'claychat_gpay_secret_2026';
+// Check Order Status
+app.get('/api/uropay/status/:uroPayOrderId', (req, res) => {
+  const { uroPayOrderId } = req.params;
+  const order = orders.get(uroPayOrderId);
+  res.json({
+    success: true,
+    data: {
+      uroPayOrderId,
+      orderStatus: order ? order.status : 'PENDING'
+    }
+  });
+});
 
+// Custom Google Pay for Business Notification Webhook
 app.post('/api/gpay/webhook', (req, res) => {
   const authHeader = req.headers['x-webhook-secret'];
   if (authHeader && authHeader !== GPAY_WEBHOOK_SECRET) {
@@ -472,71 +349,248 @@ app.post('/api/gpay/webhook', (req, res) => {
   }
 
   const { title = '', text = '', amount = null, payer = '' } = req.body;
-  console.log(`[GPay Business Notification] Received: "${title}" - "${text}"`);
+  console.log(`[GPay Business Notification] "${title}" - "${text}"`);
 
-  // Extract amount using robust regex
   let detectedAmount = amount;
   if (!detectedAmount) {
     const combined = `${title} ${text}`;
     const match = combined.match(/(?:₹|Rs\.?|inr)?\s*([0-9]+(?:\.[0-9]{1,2})?)\s*(?:received|credited|from)?/i);
-    if (match) {
-      detectedAmount = parseFloat(match[1]);
-    }
+    if (match) detectedAmount = parseFloat(match[1]);
   }
 
-  console.log(`[GPay Business] Parsed Amount: ₹${detectedAmount}`);
-
-  // Find the most recently active waiting or pending user
-  let activated = false;
-  // Check active orders
+  let activatedUserId = null;
+  // Activate any pending order first
   for (const [orderId, order] of orders.entries()) {
     if (order.status === 'CREATED' || order.status === 'UTR_SUBMITTED') {
       order.status = 'COMPLETED';
       activateUserVip(order.userId);
-      activated = true;
+      activatedUserId = order.userId;
+      io.to('admin_room').emit('new-order', order);
       console.log(`[GPay Business] Auto-activated VIP for user ${order.userId} on order ${orderId}`);
       break;
     }
   }
 
-  // If no explicit order in map, activate the most recently connected active user
-  if (!activated && activeUsers.size > 0) {
+  // Fallback: activate most recent non-VIP active user
+  if (!activatedUserId && activeUsers.size > 0) {
     const lastUser = Array.from(activeUsers.values()).reverse().find(u => !u.isVip);
     if (lastUser) {
       activateUserVip(lastUser.userId);
+      activatedUserId = lastUser.userId;
       console.log(`[GPay Business] Auto-activated VIP for active user ${lastUser.userId}`);
-      activated = true;
     }
   }
+
+  const recordedOrder = {
+    uroPayOrderId: `gpay_${Date.now()}`,
+    merchantOrderId: `GPAY_${Date.now()}`,
+    userId: activatedUserId || 'GPay_User',
+    amount: detectedAmount ? detectedAmount * 100 : 2000,
+    amountRupees: detectedAmount || '20.00',
+    status: 'COMPLETED',
+    source: 'GPay Companion Notification',
+    title,
+    text,
+    createdAt: new Date().toISOString()
+  };
+  orders.set(recordedOrder.uroPayOrderId, recordedOrder);
+
+  // Broadcast to Admin & Connected Companion clients
+  io.to('admin_room').emit('new-order', recordedOrder);
 
   res.status(200).json({
     success: true,
     message: 'GPay notification processed successfully',
-    activated,
+    activated: Boolean(activatedUserId),
+    activatedUserId,
     detectedAmount
   });
 });
 
-// Moderation Log Endpoint
-app.get('/api/moderation/reports', (req, res) => {
-  if (fs.existsSync(REPORTS_LOG_PATH)) {
-    const content = fs.readFileSync(REPORTS_LOG_PATH, 'utf-8');
-    return res.type('text/plain').send(content);
+// ----------------------------------------------------
+// Admin REST APIs (Protected by requireAdminAuth)
+// ----------------------------------------------------
+
+// Admin Dashboard Analytics & Metrics
+app.get('/api/admin/metrics', requireAdminAuth, (req, res) => {
+  let videoOnline = 0;
+  let textOnline = 0;
+  for (const user of activeUsers.values()) {
+    if (user.chatMode === 'text') textOnline++;
+    else videoOnline++;
   }
-  res.send('No reports recorded yet.');
+
+  let totalVipCount = 0;
+  for (const u of registeredUsers.values()) {
+    if (u.isVip) totalVipCount++;
+  }
+
+  let completedOrders = 0;
+  let totalRevenueRupees = 0;
+  const recentOrdersList = [];
+  for (const ord of orders.values()) {
+    if (ord.status === 'COMPLETED') {
+      completedOrders++;
+      totalRevenueRupees += parseFloat(ord.amountRupees || (ord.amount / 100) || 0);
+    }
+    recentOrdersList.push(ord);
+  }
+  recentOrdersList.sort((a, b) => new Date(b.createdAt || 0) - new Date(a.createdAt || 0));
+
+  res.json({
+    success: true,
+    metrics: {
+      totalOnline: activeUsers.size,
+      videoOnline,
+      textOnline,
+      totalRegistered: registeredUsers.size,
+      totalVip: totalVipCount,
+      completedOrders,
+      totalRevenueRupees: totalRevenueRupees.toFixed(2),
+      totalReports: reportsList.length,
+      bannedCount: bannedUsers.size
+    },
+    users: Array.from(registeredUsers.values()),
+    recentOrders: recentOrdersList.slice(0, 50),
+    reports: reportsList.slice(0, 50),
+    offers: offersConfig
+  });
 });
 
-// Matchmaking Logic
+// Admin Update Offers
+app.post('/api/admin/offers', requireAdminAuth, (req, res) => {
+  const { vipPrice, title, badge, discountText, features } = req.body;
+
+  if (vipPrice && !isNaN(vipPrice)) offersConfig.vipPrice = parseFloat(vipPrice);
+  if (title) offersConfig.title = title;
+  if (badge) offersConfig.badge = badge;
+  if (discountText) offersConfig.discountText = discountText;
+  if (Array.isArray(features)) offersConfig.features = features;
+  offersConfig.updatedAt = new Date().toISOString();
+
+  saveOffers();
+  io.emit('offers-updated', offersConfig);
+
+  console.log(`[Admin] Updated VIP Offer: ₹${offersConfig.vipPrice}`);
+  res.json({ success: true, message: 'Offers updated successfully', offers: offersConfig });
+});
+
+// Admin Reports List & Actions
+app.get('/api/admin/reports', requireAdminAuth, (req, res) => {
+  res.json({ success: true, reports: reportsList });
+});
+
+app.post('/api/admin/reports/:id/action', requireAdminAuth, (req, res) => {
+  const { id } = req.params;
+  const { action } = req.body; // 'ban' | 'dismiss'
+
+  const report = reportsList.find(r => r.id === id);
+  if (!report) {
+    return res.status(404).json({ success: false, error: 'Report not found' });
+  }
+
+  if (action === 'ban') {
+    bannedUsers.add(report.reportedId);
+    saveBans();
+    report.status = 'BANNED';
+
+    // Kick banned user from active connection if online
+    for (const [sId, user] of activeUsers.entries()) {
+      if (user.userId === report.reportedId) {
+        const s = io.sockets.sockets.get(sId);
+        if (s) {
+          s.emit('moderation-warning', { message: 'Your account has been permanently banned by admin for violation of community standards.' });
+          leaveCurrentChat(sId, 'banned');
+          s.disconnect(true);
+        }
+      }
+    }
+  } else if (action === 'dismiss') {
+    report.status = 'DISMISSED';
+  }
+
+  saveReports();
+  res.json({ success: true, report });
+});
+
+// Admin Toggle VIP for a User
+app.post('/api/admin/users/:userId/vip', requireAdminAuth, (req, res) => {
+  const { userId } = req.params;
+  const { isVip } = req.body;
+
+  // Update in registeredUsers if email matches or search by userId
+  let found = false;
+  for (const [email, user] of registeredUsers.entries()) {
+    if (user.email === userId || user.googleId === userId || email === userId) {
+      user.isVip = Boolean(isVip);
+      registeredUsers.set(email, user);
+      found = true;
+      break;
+    }
+  }
+  saveUsers();
+
+  // Update in active users
+  for (const [sId, user] of activeUsers.entries()) {
+    if (user.userId === userId || user.email === userId) {
+      user.isVip = Boolean(isVip);
+      const s = io.sockets.sockets.get(sId);
+      if (s) s.emit('vip-activated', { isVip: user.isVip, message: 'VIP status updated by Administrator.' });
+      found = true;
+    }
+  }
+
+  res.json({ success: true, message: `VIP status set to ${isVip} for ${userId}`, found });
+});
+
+// Admin Page Route
+app.get('/admin', (req, res) => {
+  res.sendFile(path.join(__dirname, 'public', 'admin.html'));
+});
+
+// ----------------------------------------------------
+// Smart Matchmaking & Queue Engine
+// ----------------------------------------------------
+
+function isAgeMatch(candidateAge, preferredRange) {
+  if (!preferredRange || preferredRange === 'all') return true;
+  if (!candidateAge) return true; // allow unspecified
+  const age = parseInt(candidateAge, 10);
+  if (preferredRange === '18-24') return age >= 18 && age <= 24;
+  if (preferredRange === '25-34') return age >= 25 && age <= 34;
+  if (preferredRange === '35+') return age >= 35;
+  return true;
+}
+
+function calculateCommonInterests(listA, listB) {
+  if (!Array.isArray(listA) || !Array.isArray(listB)) return [];
+  const setB = new Set(listB.map(s => s.toLowerCase()));
+  return listA.filter(item => setB.has(item.toLowerCase()));
+}
+
 function isMatchCompatible(userA, userB) {
   if (userA.id === userB.id) return false;
+  // Mode Check (Mandatory: Text mode matches only Text mode, Video matches Video)
+  if (userA.chatMode !== userB.chatMode) return false;
+
+  // Safety & Ban Check
   if (userA.blockedUsers.has(userB.userId) || userB.blockedUsers.has(userA.userId)) return false;
+  if (bannedUsers.has(userA.userId) || bannedUsers.has(userB.userId)) return false;
 
   // Gender Filter (VIP)
-  if (userA.isVip && userA.lookingFor !== 'all') {
+  if (userA.isVip && userA.lookingFor && userA.lookingFor !== 'all') {
     if (userB.myGender !== userA.lookingFor) return false;
   }
-  if (userB.isVip && userB.lookingFor !== 'all') {
+  if (userB.isVip && userB.lookingFor && userB.lookingFor !== 'all') {
     if (userA.myGender !== userB.lookingFor) return false;
+  }
+
+  // Age Filter (VIP)
+  if (userA.isVip && userA.agePreference && userA.agePreference !== 'all') {
+    if (!isAgeMatch(userB.age, userA.agePreference)) return false;
+  }
+  if (userB.isVip && userB.agePreference && userB.agePreference !== 'all') {
+    if (!isAgeMatch(userA.age, userB.agePreference)) return false;
   }
 
   return true;
@@ -546,20 +600,34 @@ function tryMatchUser(socketId) {
   const user = activeUsers.get(socketId);
   if (!user || user.partnerId || user.inQueue) return;
 
-  let matchIndex = -1;
+  // Check ban status
+  if (bannedUsers.has(user.userId)) {
+    const s = io.sockets.sockets.get(socketId);
+    if (s) s.emit('moderation-warning', { message: 'Your account is banned.' });
+    return;
+  }
+
+  // Find best compatible candidate (prioritizing shared interests)
+  let bestIndex = -1;
+  let highestScore = -1;
+
   for (let i = 0; i < waitingQueue.length; i++) {
     const candidateId = waitingQueue[i];
     const candidate = activeUsers.get(candidateId);
     if (!candidate || candidateId === socketId) continue;
 
     if (isMatchCompatible(user, candidate)) {
-      matchIndex = i;
-      break;
+      const common = calculateCommonInterests(user.interests, candidate.interests);
+      const score = common.length * 10;
+      if (score > highestScore) {
+        highestScore = score;
+        bestIndex = i;
+      }
     }
   }
 
-  if (matchIndex !== -1) {
-    const [partnerId] = waitingQueue.splice(matchIndex, 1);
+  if (bestIndex !== -1) {
+    const [partnerId] = waitingQueue.splice(bestIndex, 1);
     const partner = activeUsers.get(partnerId);
 
     if (!partner) {
@@ -584,20 +652,28 @@ function tryMatchUser(socketId) {
     if (socketA) socketA.join(roomId);
     if (socketB) socketB.join(roomId);
 
-    console.log(`[Match] Paired ${socketId} with ${partnerId} in ${roomId}`);
+    const commonInterests = calculateCommonInterests(user.interests, partner.interests);
+
+    console.log(`[Match] Mode: ${user.chatMode} | ${socketId} <-> ${partnerId} | Common Interests: [${commonInterests.join(', ')}]`);
 
     if (socketA) {
       socketA.emit('matched', {
         roomId,
         isInitiator: true,
-        partnerGender: partner.myGender || 'unspecified'
+        chatMode: user.chatMode,
+        partnerGender: partner.myGender || 'unspecified',
+        partnerAge: partner.age || 'unspecified',
+        commonInterests
       });
     }
     if (socketB) {
       socketB.emit('matched', {
         roomId,
         isInitiator: false,
-        partnerGender: user.myGender || 'unspecified'
+        chatMode: partner.chatMode,
+        partnerGender: user.myGender || 'unspecified',
+        partnerAge: user.age || 'unspecified',
+        commonInterests
       });
     }
   } else {
@@ -605,7 +681,7 @@ function tryMatchUser(socketId) {
       waitingQueue.push(socketId);
       user.inQueue = true;
       const socket = io.sockets.sockets.get(socketId);
-      if (socket) socket.emit('waiting', { queueLength: waitingQueue.length });
+      if (socket) socket.emit('waiting', { queueLength: waitingQueue.length, chatMode: user.chatMode });
     }
   }
 }
@@ -646,37 +722,96 @@ function leaveCurrentChat(socketId, reason = 'left') {
   user.inQueue = false;
 }
 
-// Socket.io Handlers
+// ----------------------------------------------------
+// Socket.io Real-time Handlers
+// ----------------------------------------------------
+
 io.on('connection', (socket) => {
   console.log(`[Socket Connected] ${socket.id}`);
 
+  // Join admin room if requested
+  socket.on('admin-join', (data) => {
+    if (data && data.key === ADMIN_PASSWORD) {
+      socket.join('admin_room');
+      socket.emit('admin-authenticated', { success: true });
+    }
+  });
+
   socket.on('init-profile', (data) => {
-    const { userId, myGender = 'male', lookingFor = 'all', isVip = false } = data || {};
+    const {
+      userId,
+      myGender = 'male',
+      lookingFor = 'all',
+      age = 22,
+      agePreference = 'all',
+      interests = [],
+      chatMode = 'video',
+      isVip = false
+    } = data || {};
+
+    if (bannedUsers.has(userId)) {
+      socket.emit('moderation-warning', { message: 'This account is permanently banned.' });
+      socket.disconnect(true);
+      return;
+    }
+
     activeUsers.set(socket.id, {
       id: socket.id,
       userId: userId || socket.id,
       myGender,
       lookingFor,
+      age: parseInt(age, 10) || 22,
+      agePreference,
+      interests: Array.isArray(interests) ? interests : [],
+      chatMode: chatMode === 'text' ? 'text' : 'video',
       isVip: Boolean(isVip),
       roomId: null,
       partnerId: null,
       inQueue: false,
       blockedUsers: new Set(),
-      reportCount: 0
+      reportCount: 0,
+      connectedAt: new Date().toISOString()
     });
     userSockets.set(userId || socket.id, socket.id);
 
-    socket.emit('profile-updated', { status: 'ok', isVip: Boolean(isVip) });
+    socket.emit('profile-updated', {
+      status: 'ok',
+      isVip: Boolean(isVip),
+      chatMode: chatMode === 'text' ? 'text' : 'video'
+    });
     io.emit('online-count', activeUsers.size);
   });
 
-  socket.on('update-preferences', ({ myGender, lookingFor, isVip }) => {
+  socket.on('update-preferences', (data) => {
+    const user = activeUsers.get(socket.id);
+    if (user && data) {
+      if (data.myGender) user.myGender = data.myGender;
+      if (data.lookingFor) user.lookingFor = data.lookingFor;
+      if (data.age) user.age = parseInt(data.age, 10) || user.age;
+      if (data.agePreference) user.agePreference = data.agePreference;
+      if (Array.isArray(data.interests)) user.interests = data.interests;
+      if (data.chatMode) user.chatMode = data.chatMode === 'text' ? 'text' : 'video';
+      if (typeof data.isVip === 'boolean') user.isVip = data.isVip;
+
+      socket.emit('profile-updated', {
+        status: 'ok',
+        myGender: user.myGender,
+        lookingFor: user.lookingFor,
+        age: user.age,
+        agePreference: user.agePreference,
+        interests: user.interests,
+        chatMode: user.chatMode,
+        isVip: user.isVip
+      });
+    }
+  });
+
+  socket.on('switch-mode', (newMode) => {
     const user = activeUsers.get(socket.id);
     if (user) {
-      if (myGender) user.myGender = myGender;
-      if (lookingFor) user.lookingFor = lookingFor;
-      if (typeof isVip === 'boolean') user.isVip = isVip;
-      socket.emit('profile-updated', { status: 'ok', myGender: user.myGender, lookingFor: user.lookingFor, isVip: user.isVip });
+      leaveCurrentChat(socket.id, 'mode-switched');
+      user.chatMode = newMode === 'text' ? 'text' : 'video';
+      socket.emit('mode-changed', { chatMode: user.chatMode });
     }
   });
 
@@ -712,23 +847,24 @@ io.on('connection', (socket) => {
     }
   });
 
+  // WebRTC Signaling (Active only in video mode)
   socket.on('webrtc-offer', (data) => {
     const user = activeUsers.get(socket.id);
-    if (user && user.partnerId) {
+    if (user && user.partnerId && user.chatMode === 'video') {
       io.to(user.partnerId).emit('webrtc-offer', data);
     }
   });
 
   socket.on('webrtc-answer', (data) => {
     const user = activeUsers.get(socket.id);
-    if (user && user.partnerId) {
+    if (user && user.partnerId && user.chatMode === 'video') {
       io.to(user.partnerId).emit('webrtc-answer', data);
     }
   });
 
   socket.on('webrtc-ice-candidate', (data) => {
     const user = activeUsers.get(socket.id);
-    if (user && user.partnerId) {
+    if (user && user.partnerId && user.chatMode === 'video') {
       io.to(user.partnerId).emit('webrtc-ice-candidate', data);
     }
   });
@@ -754,7 +890,7 @@ io.on('connection', (socket) => {
       const partner = activeUsers.get(user.partnerId);
       const partnerUserId = partner ? partner.userId : 'unknown';
 
-      logReport(user.userId, partnerUserId, reason || 'Inappropriate behavior');
+      const report = logReportEntry(user.userId, partnerUserId, reason || 'Inappropriate behavior');
 
       if (partner) {
         partner.reportCount += 1;
@@ -788,12 +924,12 @@ io.on('connection', (socket) => {
 function startServer(port) {
   server.listen(port, () => {
     console.log(`===============================================`);
-    console.log(` Stranger Chat Server running on http://localhost:${port}`);
-    console.log(` Environment: ${process.env.NODE_ENV || 'development'}`);
-    console.log(` UroPay UPI: ${UROPAY_API_KEY ? 'Configured & Live' : 'Demo / Sandbox Ready'}`);
-    console.log(` WebRTC STUN: Default Google STUN enabled`);
-    console.log(` Gender Filter & Matchmaking: Ready`);
-    console.log(` Moderation & Block Engine: Ready`);
+    console.log(` Clay Chat Server running on http://localhost:${port}`);
+    console.log(` Admin Dashboard: http://localhost:${port}/admin (Password: ${ADMIN_PASSWORD})`);
+    console.log(` Webhook URL: http://localhost:${port}/api/gpay/webhook`);
+    console.log(` Modes: Video Chat & Dedicated Text-Only Chat`);
+    console.log(` Filters: Gender, Age & Common Interests Engine Ready`);
+    console.log(` Payment: Google Pay Business VPA (${UROPAY_VPA}) - ₹${offersConfig.vipPrice}`);
     console.log(`===============================================`);
   });
 
