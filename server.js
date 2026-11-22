@@ -20,7 +20,7 @@ const ADMIN_PASSWORD = process.env.ADMIN_PASSWORD || 'admin123';
 const UROPAY_API_BASE = 'https://api.uropay.me';
 const UROPAY_API_KEY = process.env.UROPAY_API_KEY || '';
 const UROPAY_SECRET = process.env.UROPAY_SECRET || '';
-const UROPAY_VPA = process.env.UROPAY_VPA || '8940679198@okbizaxis';
+const UROPAY_VPA = process.env.UROPAY_VPA || 'sdhinakar6-1@oksbi';
 const UROPAY_VPA_NAME = process.env.UROPAY_VPA_NAME || 'LIGHT.LTD';
 const GPAY_WEBHOOK_SECRET = process.env.GPAY_WEBHOOK_SECRET || 'claychat_gpay_secret_2026';
 const GOOGLE_CLIENT_ID = process.env.GOOGLE_CLIENT_ID || '413973614482-compute@developer.gserviceaccount.com';
@@ -929,7 +929,7 @@ function startServer(port) {
     console.log(` Webhook URL: http://localhost:${port}/api/gpay/webhook`);
     console.log(` Modes: Video Chat & Dedicated Text-Only Chat`);
     console.log(` Filters: Gender, Age & Common Interests Engine Ready`);
-    console.log(` Payment: Google Pay Business VPA (${UROPAY_VPA}) - ₹${offersConfig.vipPrice}`);
+    console.log(` Payment: UPI VPA (${UROPAY_VPA}) - ₹${offersConfig.vipPrice}`);
     console.log(`===============================================`);
   });
 

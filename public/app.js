@@ -167,31 +167,15 @@ async function initMedia() {
 // ----------------------------------------------------
 // Interests & Age Management
 // ----------------------------------------------------
-function updateInterestsUI() {
-  if (activeInterestsCount) {
-    activeInterestsCount.textContent = myInterests.length;
-  }
-  document.querySelectorAll('.interest-chip').forEach(chip => {
-    const tag = chip.getAttribute('data-tag');
-    if (myInterests.includes(tag)) {
-      chip.classList.add('selected');
-    } else {
-      chip.classList.remove('selected');
-    }
-  });
-  if (myAgeInput) myAgeInput.value = myAge;
-}
+const interestsGrid = document.getElementById('interestsGrid');
+const customInterestInput = document.getElementById('customInterestInput');
+const addCustomInterestBtn = document.getElementById('addCustomInterestBtn');
 
-openInterestsModalBtn.addEventListener('click', () => {
-  updateInterestsUI();
-  interestsModal.style.display = 'flex';
-});
-
-document.querySelectorAll('.interest-chip').forEach(chip => {
+function attachChipListener(chip) {
   chip.addEventListener('click', () => {
     const tag = chip.getAttribute('data-tag');
     if (myInterests.includes(tag)) {
-      myInterests = myInterests.filter(t => t !== tag);
+      myInterests = myInterests.filter(t => t.toLowerCase() !== tag.toLowerCase());
       chip.classList.remove('selected');
     } else {
       myInterests.push(tag);
@@ -199,6 +183,91 @@ document.querySelectorAll('.interest-chip').forEach(chip => {
     }
     if (activeInterestsCount) activeInterestsCount.textContent = myInterests.length;
   });
+}
+
+function updateInterestsUI() {
+  if (activeInterestsCount) {
+    activeInterestsCount.textContent = myInterests.length;
+  }
+
+  // Ensure any custom tags in myInterests are present as chips in the grid
+  myInterests.forEach(tag => {
+    let existingChip = Array.from(document.querySelectorAll('.interest-chip')).find(
+      c => c.getAttribute('data-tag')?.toLowerCase() === tag.toLowerCase()
+    );
+    if (!existingChip && interestsGrid) {
+      const newChip = document.createElement('button');
+      newChip.type = 'button';
+      newChip.className = 'interest-chip selected';
+      newChip.setAttribute('data-tag', tag);
+      newChip.textContent = `✨ ${tag}`;
+      attachChipListener(newChip);
+      interestsGrid.prepend(newChip);
+    }
+  });
+
+  document.querySelectorAll('.interest-chip').forEach(chip => {
+    const tag = chip.getAttribute('data-tag');
+    if (myInterests.some(t => t.toLowerCase() === tag.toLowerCase())) {
+      chip.classList.add('selected');
+    } else {
+      chip.classList.remove('selected');
+    }
+  });
+
+  if (myAgeInput) myAgeInput.value = myAge;
+}
+
+function handleAddCustomInterest() {
+  if (!customInterestInput) return;
+  const tag = customInterestInput.value.trim();
+  if (!tag) return;
+
+  if (!myInterests.some(t => t.toLowerCase() === tag.toLowerCase())) {
+    myInterests.push(tag);
+  }
+
+  let existingChip = Array.from(document.querySelectorAll('.interest-chip')).find(
+    c => c.getAttribute('data-tag')?.toLowerCase() === tag.toLowerCase()
+  );
+
+  if (!existingChip && interestsGrid) {
+    const newChip = document.createElement('button');
+    newChip.type = 'button';
+    newChip.className = 'interest-chip selected';
+    newChip.setAttribute('data-tag', tag);
+    newChip.textContent = `✨ ${tag}`;
+    attachChipListener(newChip);
+    interestsGrid.prepend(newChip);
+  } else if (existingChip) {
+    existingChip.classList.add('selected');
+  }
+
+  customInterestInput.value = '';
+  if (activeInterestsCount) activeInterestsCount.textContent = myInterests.length;
+}
+
+if (addCustomInterestBtn) {
+  addCustomInterestBtn.addEventListener('click', handleAddCustomInterest);
+}
+
+if (customInterestInput) {
+  customInterestInput.addEventListener('keydown', (e) => {
+    if (e.key === 'Enter') {
+      e.preventDefault();
+      handleAddCustomInterest();
+    }
+  });
+}
+
+openInterestsModalBtn.addEventListener('click', () => {
+  updateInterestsUI();
+  interestsModal.style.display = 'flex';
+  if (customInterestInput) customInterestInput.focus();
+});
+
+document.querySelectorAll('.interest-chip').forEach(chip => {
+  attachChipListener(chip);
 });
 
 saveInterestsBtn.addEventListener('click', () => {
@@ -213,7 +282,7 @@ saveInterestsBtn.addEventListener('click', () => {
     lookingFor: lookingForSelect.value,
     agePreference: agePreferenceSelect.value
   });
-  appendSystemMessage(`🏷️ Preferences saved: Age ${myAge}, ${myInterests.length} Interests.`);
+  appendSystemMessage(`🏷️ Preferences saved: Age ${myAge}, ${myInterests.length} Interests (${myInterests.join(', ')}).`);
 });
 
 // Close modal on click outside

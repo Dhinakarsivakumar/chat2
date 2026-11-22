@@ -187,7 +187,16 @@
         <input type="number" id="myAgeInput" min="18" max="99" value="22" style="padding: 8px 12px; border-radius: 8px; border: 1px solid #374151; background: #1f2937; color: #fff; width: 100px;" />
       </div>
 
-      <label style="font-size: 0.85rem; font-weight: 600; display: block; margin-bottom: 8px;">Select Interests (Tap to toggle):</label>
+      <!-- Custom Interest Input -->
+      <div class="custom-interest-row" style="margin-bottom: 14px;">
+        <label style="font-size: 0.85rem; font-weight: 600; display: block; margin-bottom: 6px;">Add Custom Interest Tag:</label>
+        <div style="display: flex; gap: 8px;">
+          <input type="text" id="customInterestInput" placeholder="Type your own interest (e.g. Cricket, AI, Dance...)" maxlength="25" style="flex: 1; padding: 8px 12px; border-radius: 8px; border: 1px solid #374151; background: #1f2937; color: #fff; font-size: 0.85rem; outline: none;" />
+          <button type="button" id="addCustomInterestBtn" class="primary-btn" style="padding: 8px 16px; font-size: 0.85rem; border-radius: 8px;">+ Add</button>
+        </div>
+      </div>
+
+      <label style="font-size: 0.85rem; font-weight: 600; display: block; margin-bottom: 8px;">Your Active & Suggested Interests (Tap to toggle):</label>
       <div class="interests-grid" id="interestsGrid">
         <button type="button" class="interest-chip" data-tag="Music">🎵 Music</button>
         <button type="button" class="interest-chip" data-tag="Gaming">🎮 Gaming</button>
@@ -282,7 +291,7 @@
 
           <div class="upi-details">
             <div class="payee-tag" style="margin-bottom: 6px; font-size: 0.95rem;">
-              Payee: <strong id="upiPayeeText" style="color: #818cf8;">LIGHT.LTD (8940679198@okbizaxis)</strong>
+              Payee: <strong id="upiPayeeText" style="color: #818cf8;">LIGHT.LTD (sdhinakar6-1@oksbi)</strong>
             </div>
             <div class="amount-tag">Amount: <strong id="upiAmountText">₹20.00</strong></div>
             <p class="upi-instruction">Scan with Google Pay, PhonePe, Paytm, or BHIM</p>
