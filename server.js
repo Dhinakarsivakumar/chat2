@@ -40,6 +40,10 @@ let registeredUsers = new Map(); // email -> user object
 let offersConfig = {
   vipPrice: 20,
   currency: 'INR',
+  planType: 'monthly',
+  durationDays: 30,
+  vpa: 'sdhinakar6-1@oksbi',
+  vpaName: 'LIGHT.LTD',
   title: 'VIP Monthly Pass',
   badge: '⚡ SPECIAL 50% OFF',
   discountText: 'Limited Time Offer: ₹20 only (Regular ₹40)',
@@ -154,26 +158,99 @@ function logReportEntry(reporterId, reportedId, reason) {
   return report;
 }
 
-function activateUserVip(userId) {
-  for (const [sId, user] of activeUsers.entries()) {
-    if (user.userId === userId) {
+function activateUserVip(userId, customDurationDays = null, customPlanType = null) {
+  const durationDays = parseInt(customDurationDays || offersConfig.durationDays || 30, 10);
+  const planType = customPlanType || offersConfig.planType || 'monthly';
+  const vipExpiresAt = new Date(Date.now() + durationDays * 24 * 60 * 60 * 1000).toISOString();
+
+  // Update in registered users
+  for (const [email, user] of registeredUsers.entries()) {
+    if (user.email === userId || user.googleId === userId || user.userId === userId) {
       user.isVip = true;
-      if (user.email && registeredUsers.has(user.email)) {
-        const u = registeredUsers.get(user.email);
-        u.isVip = true;
-        registeredUsers.set(user.email, u);
-        saveUsers();
-      }
+      user.vipPlanType = planType;
+      user.vipDurationDays = durationDays;
+      user.vipExpiresAt = vipExpiresAt;
+      user.vipActivatedAt = new Date().toISOString();
+      registeredUsers.set(email, user);
+      saveUsers();
+      break;
+    }
+  }
+
+  // Update in active connected users
+  for (const [sId, user] of activeUsers.entries()) {
+    if (user.userId === userId || user.email === userId) {
+      user.isVip = true;
+      user.vipPlanType = planType;
+      user.vipDurationDays = durationDays;
+      user.vipExpiresAt = vipExpiresAt;
+
       const socket = io.sockets.sockets.get(sId);
       if (socket) {
         socket.emit('vip-activated', {
           isVip: true,
-          message: '🌟 VIP Plan activated! Filters & priority matching unlocked.'
+          planType,
+          durationDays,
+          vipExpiresAt,
+          message: `🌟 VIP ${planType.toUpperCase()} Plan activated! Valid for ${durationDays} days.`
         });
       }
     }
   }
+  console.log(`[VIP Activated] User: ${userId} | Plan: ${planType} | Duration: ${durationDays} days | Expires: ${vipExpiresAt}`);
 }
+
+// Automatic VIP Expiration Engine
+function checkVipExpirations() {
+  const now = Date.now();
+  let changed = false;
+
+  for (const [email, user] of registeredUsers.entries()) {
+    if (user.isVip && user.vipExpiresAt) {
+      if (new Date(user.vipExpiresAt).getTime() <= now) {
+        user.isVip = false;
+        user.vipExpired = true;
+        changed = true;
+        console.log(`[VIP Expiry Engine] Plan expired for user ${email}`);
+
+        // Notify if user is online
+        for (const [sId, active] of activeUsers.entries()) {
+          if (active.email === email || active.userId === user.userId || active.userId === email) {
+            active.isVip = false;
+            active.lookingFor = 'all';
+            active.agePreference = 'all';
+            const s = io.sockets.sockets.get(sId);
+            if (s) {
+              s.emit('vip-expired', {
+                message: '⏳ Your VIP subscription period has expired. Re-upgrade to continue using VIP filters!'
+              });
+            }
+          }
+        }
+      }
+    }
+  }
+
+  for (const [sId, active] of activeUsers.entries()) {
+    if (active.isVip && active.vipExpiresAt) {
+      if (new Date(active.vipExpiresAt).getTime() <= now) {
+        active.isVip = false;
+        active.lookingFor = 'all';
+        active.agePreference = 'all';
+        const s = io.sockets.sockets.get(sId);
+        if (s) {
+          s.emit('vip-expired', {
+            message: '⏳ Your VIP subscription period has expired. Re-upgrade to continue using VIP filters!'
+          });
+        }
+      }
+    }
+  }
+
+  if (changed) saveUsers();
+}
+
+setInterval(checkVipExpirations, 10000); // Check every 10 seconds
 
 // ----------------------------------------------------
 // Public REST Endpoints
@@ -253,9 +330,12 @@ app.post('/api/uropay/create-order', async (req, res) => {
   const finalPrice = amount !== null ? amount : (offersConfig.vipPrice * 100); // in paise
   const amountInRupees = (finalPrice / 100).toFixed(2);
 
+  const activeVpa = offersConfig.vpa || UROPAY_VPA || 'sdhinakar6-1@oksbi';
+  const activeVpaName = offersConfig.vpaName || UROPAY_VPA_NAME || 'LIGHT.LTD';
+
   const mockOrderId = `order_${Date.now()}`;
-  // Standard UPI URI format with specified VPA and Name
-  const upiUri = `upi://pay?pa=${encodeURIComponent(UROPAY_VPA)}&pn=${encodeURIComponent(UROPAY_VPA_NAME)}&am=${amountInRupees}&cu=INR&tn=Clay%20Chat%20VIP`;
+  // Standard UPI URI format with dynamic VPA, Name, and exact Price
+  const upiUri = `upi://pay?pa=${encodeURIComponent(activeVpa)}&pn=${encodeURIComponent(activeVpaName)}&am=${amountInRupees}&cu=INR&tn=Clay%20Chat%20VIP`;
 
   try {
     const qrDataUrl = await QRCode.toDataURL(upiUri, {
@@ -274,6 +354,9 @@ app.post('/api/uropay/create-order', async (req, res) => {
       amountRupees: amountInRupees,
       status: 'CREATED',
       upiUri,
+      vpa: activeVpa,
+      planType: offersConfig.planType || 'monthly',
+      durationDays: offersConfig.durationDays || 30,
       createdAt: new Date().toISOString()
     };
 
@@ -288,8 +371,10 @@ app.post('/api/uropay/create-order', async (req, res) => {
         qrCodeBase64: qrDataUrl,
         amount: finalPrice,
         amountRupees: amountInRupees,
-        vpa: UROPAY_VPA,
-        vpaName: UROPAY_VPA_NAME
+        vpa: activeVpa,
+        vpaName: activeVpaName,
+        planType: offersConfig.planType || 'monthly',
+        durationDays: offersConfig.durationDays || 30
       }
     });
   } catch (err) {
@@ -459,20 +544,26 @@ app.get('/api/admin/metrics', requireAdminAuth, (req, res) => {
 
 // Admin Update Offers
 app.post('/api/admin/offers', requireAdminAuth, (req, res) => {
-  const { vipPrice, title, badge, discountText, features } = req.body;
+  const { vipPrice, title, badge, discountText, features, planType, durationDays, vpa, vpaName } = req.body;
 
   if (vipPrice && !isNaN(vipPrice)) offersConfig.vipPrice = parseFloat(vipPrice);
   if (title) offersConfig.title = title;
   if (badge) offersConfig.badge = badge;
   if (discountText) offersConfig.discountText = discountText;
   if (Array.isArray(features)) offersConfig.features = features;
+
+  if (planType) offersConfig.planType = planType;
+  if (durationDays && !isNaN(durationDays)) offersConfig.durationDays = parseInt(durationDays, 10);
+  if (vpa) offersConfig.vpa = vpa.trim();
+  if (vpaName) offersConfig.vpaName = vpaName.trim();
+
   offersConfig.updatedAt = new Date().toISOString();
 
   saveOffers();
   io.emit('offers-updated', offersConfig);
 
-  console.log(`[Admin] Updated VIP Offer: ₹${offersConfig.vipPrice}`);
-  res.json({ success: true, message: 'Offers updated successfully', offers: offersConfig });
+  console.log(`[Admin] Updated VIP Offer: ₹${offersConfig.vipPrice} | Plan: ${offersConfig.planType} (${offersConfig.durationDays} days) | VPA: ${offersConfig.vpa}`);
+  res.json({ success: true, message: 'Offers and UPI configuration updated successfully', offers: offersConfig });
 });
 
 // Admin Reports List & Actions
@@ -513,34 +604,38 @@ app.post('/api/admin/reports/:id/action', requireAdminAuth, (req, res) => {
   res.json({ success: true, report });
 });
 
-// Admin Toggle VIP for a User
+// Admin Toggle VIP for a User (with customizable Plan & Duration)
 app.post('/api/admin/users/:userId/vip', requireAdminAuth, (req, res) => {
   const { userId } = req.params;
-  const { isVip } = req.body;
+  const { isVip, durationDays = null, planType = null } = req.body;
 
-  // Update in registeredUsers if email matches or search by userId
-  let found = false;
-  for (const [email, user] of registeredUsers.entries()) {
-    if (user.email === userId || user.googleId === userId || email === userId) {
-      user.isVip = Boolean(isVip);
-      registeredUsers.set(email, user);
-      found = true;
-      break;
+  if (isVip) {
+    activateUserVip(userId, durationDays, planType);
+    return res.json({ success: true, message: `VIP activated for ${userId}` });
+  } else {
+    // Revoke VIP
+    for (const [email, user] of registeredUsers.entries()) {
+      if (user.email === userId || user.googleId === userId || user.userId === userId) {
+        user.isVip = false;
+        user.vipExpiresAt = null;
+        registeredUsers.set(email, user);
+        break;
+      }
     }
-  }
-  saveUsers();
+    saveUsers();
 
-  // Update in active users
-  for (const [sId, user] of activeUsers.entries()) {
-    if (user.userId === userId || user.email === userId) {
-      user.isVip = Boolean(isVip);
-      const s = io.sockets.sockets.get(sId);
-      if (s) s.emit('vip-activated', { isVip: user.isVip, message: 'VIP status updated by Administrator.' });
-      found = true;
+    for (const [sId, user] of activeUsers.entries()) {
+      if (user.userId === userId || user.email === userId) {
+        user.isVip = false;
+        user.vipExpiresAt = null;
+        user.lookingFor = 'all';
+        const s = io.sockets.sockets.get(sId);
+        if (s) s.emit('vip-expired', { message: 'VIP membership revoked by administrator.' });
+      }
     }
-  }
 
-  res.json({ success: true, message: `VIP status set to ${isVip} for ${userId}`, found });
+    return res.json({ success: true, message: `VIP revoked for ${userId}` });
+  }
 });
 
 // Admin Page Route

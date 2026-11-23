@@ -293,15 +293,26 @@ interestsModal.addEventListener('click', (e) => {
 // ----------------------------------------------------
 // Dynamic Offers Fetching
 // ----------------------------------------------------
+function applyOffersUI(offers) {
+  currentOffers = offers;
+  if (vipPriceDisplay) vipPriceDisplay.textContent = `₹${offers.vipPrice}`;
+  if (modalVipTitle) modalVipTitle.textContent = offers.title || 'Unlock VIP Membership';
+  if (modalVipDiscountText) modalVipDiscountText.textContent = offers.discountText || 'Instant UPI Activation';
+
+  const periodEl = document.querySelector('.pricing-card .price-period');
+  if (periodEl) {
+    const plan = (offers.planType || 'monthly').toUpperCase();
+    const days = offers.durationDays || 30;
+    periodEl.textContent = `/ ${plan} PASS (${days} Days Instant Access)`;
+  }
+}
+
 async function fetchOffers() {
   try {
     const res = await fetch('/api/payment/offers');
     const d = await res.json();
     if (d.success && d.data) {
-      currentOffers = d.data;
-      if (vipPriceDisplay) vipPriceDisplay.textContent = `₹${currentOffers.vipPrice}`;
-      if (modalVipTitle) modalVipTitle.textContent = currentOffers.title || 'Unlock VIP Membership';
-      if (modalVipDiscountText) modalVipDiscountText.textContent = currentOffers.discountText || 'Instant UPI Activation';
+      applyOffersUI(d.data);
     }
   } catch (err) {
     console.warn('Could not fetch dynamic offers:', err);
@@ -309,10 +320,7 @@ async function fetchOffers() {
 }
 
 socket.on('offers-updated', (offers) => {
-  currentOffers = offers;
-  if (vipPriceDisplay) vipPriceDisplay.textContent = `₹${offers.vipPrice}`;
-  if (modalVipTitle) modalVipTitle.textContent = offers.title || 'Unlock VIP Membership';
-  if (modalVipDiscountText) modalVipDiscountText.textContent = offers.discountText || 'Instant UPI Activation';
+  applyOffersUI(offers);
 });
 
 // ----------------------------------------------------
@@ -337,10 +345,14 @@ socket.on('online-count', (count) => {
 });
 
 socket.on('vip-activated', (data) => {
-  activateVip();
+  activateVip(data);
   vipModal.style.display = 'none';
   if (paymentPollInterval) clearInterval(paymentPollInterval);
   appendSystemMessage('👑 ' + (data.message || 'VIP Plan Activated! Filters unlocked.'));
+});
+
+socket.on('vip-expired', (data) => {
+  deactivateVip(data.message || '⏳ Your VIP subscription has expired.');
 });
 
 socket.on('waiting', () => {
@@ -804,11 +816,17 @@ function startStatusPolling(orderId) {
   }, 3500);
 }
 
-function activateVip() {
+function activateVip(data = {}) {
   isVip = true;
-  try { localStorage.setItem('clay_is_vip', 'true'); } catch(e){}
+  try {
+    localStorage.setItem('clay_is_vip', 'true');
+    if (data.vipExpiresAt) localStorage.setItem('clay_vip_expires_at', data.vipExpiresAt);
+    if (data.planType) localStorage.setItem('clay_vip_plan_type', data.planType);
+  } catch(e){}
+
   vipBadgeBtn.classList.add('active');
-  vipBtnText.textContent = 'VIP Active';
+  const planTag = data.planType ? `${data.planType.toUpperCase()} ` : '';
+  vipBtnText.textContent = `${planTag}VIP Active ⭐`;
   socket.emit('update-preferences', { isVip: true });
 
   const femaleOpt = lookingForSelect.querySelector('option[value="female"]');
@@ -817,8 +835,41 @@ function activateVip() {
   if (maleOpt) maleOpt.textContent = 'Male ♂ (Unlocked ⭐)';
 }
 
-if (localStorage.getItem('clay_is_vip') === 'true' || localStorage.getItem('stranger_is_vip') === 'true') {
-  activateVip();
+function deactivateVip(message = null) {
+  isVip = false;
+  try {
+    localStorage.removeItem('clay_is_vip');
+    localStorage.removeItem('stranger_is_vip');
+    localStorage.removeItem('clay_vip_expires_at');
+    localStorage.removeItem('clay_vip_plan_type');
+  } catch(e){}
+
+  vipBadgeBtn.classList.remove('active');
+  vipBtnText.textContent = 'Upgrade VIP';
+  lookingForSelect.value = 'all';
+  agePreferenceSelect.value = 'all';
+  socket.emit('update-preferences', { isVip: false, lookingFor: 'all', agePreference: 'all' });
+
+  const femaleOpt = lookingForSelect.querySelector('option[value="female"]');
+  const maleOpt = lookingForSelect.querySelector('option[value="male"]');
+  if (femaleOpt) femaleOpt.textContent = 'Female ♀ (VIP ⭐)';
+  if (maleOpt) maleOpt.textContent = 'Male ♂ (VIP ⭐)';
+
+  if (message) {
+    appendSystemMessage(`⚠️ ${message}`);
+    alert(message);
+  }
+}
+
+// Check saved VIP expiration on boot
+const savedVipExpiry = localStorage.getItem('clay_vip_expires_at');
+if (savedVipExpiry && new Date(savedVipExpiry).getTime() <= Date.now()) {
+  deactivateVip();
+} else if (localStorage.getItem('clay_is_vip') === 'true') {
+  activateVip({
+    planType: localStorage.getItem('clay_vip_plan_type') || 'monthly',
+    vipExpiresAt: savedVipExpiry
+  });
 }
 
 // ----------------------------------------------------

@@ -212,8 +212,8 @@
     <div id="tab-offers" class="tab-pane" style="display: none;">
       <div class="admin-panel-card">
         <div class="panel-header">
-          <h3>👑 Dynamic VIP Offers & Subscription Settings</h3>
-          <span style="font-size: 0.85rem; color: var(--text-muted);">Changes take effect instantly on client apps without server restart</span>
+          <h3>👑 Dynamic VIP Offers, Subscription Duration & UPI Settings</h3>
+          <span style="font-size: 0.85rem; color: var(--text-muted);">Whatever price and UPI ID you set here is immediately encoded into the live QR code!</span>
         </div>
         <form id="offersForm">
           <div class="form-row">
@@ -222,25 +222,54 @@
               <input type="number" id="offerPrice" min="1" step="1" required />
             </div>
             <div class="form-group">
-              <label>Plan Title:</label>
-              <input type="text" id="offerTitle" required />
+              <label>Plan Duration Type:</label>
+              <select id="offerPlanType" style="padding: 10px 14px; border-radius: 8px; border: 1px solid var(--border); background: #1f2937; color: #fff; font-size: 0.95rem; outline: none;">
+                <option value="daily">Daily Pass (1 Day / 24 Hours)</option>
+                <option value="weekly">Weekly Pass (7 Days)</option>
+                <option value="monthly" selected>Monthly Pass (30 Days)</option>
+                <option value="custom">Custom Duration Days</option>
+              </select>
+            </div>
+            <div class="form-group">
+              <label>Duration in Days:</label>
+              <input type="number" id="offerDurationDays" min="1" max="365" value="30" required />
             </div>
           </div>
+
           <div class="form-row">
+            <div class="form-group">
+              <label>Dynamic UPI ID (VPA):</label>
+              <input type="text" id="offerVpa" placeholder="e.g. sdhinakar6-1@oksbi" value="sdhinakar6-1@oksbi" required />
+            </div>
+            <div class="form-group">
+              <label>UPI Payee Business Name:</label>
+              <input type="text" id="offerVpaName" placeholder="e.g. LIGHT.LTD" value="LIGHT.LTD" required />
+            </div>
+          </div>
+
+          <div class="form-row">
+            <div class="form-group">
+              <label>Plan Title:</label>
+              <input type="text" id="offerTitle" placeholder="e.g. VIP Monthly Pass" required />
+            </div>
             <div class="form-group">
               <label>Promo Badge Tag:</label>
               <input type="text" id="offerBadge" placeholder="e.g. ⚡ SPECIAL 50% OFF" />
             </div>
+          </div>
+
+          <div class="form-row">
             <div class="form-group">
               <label>Discount Description Text:</label>
-              <input type="text" id="offerDiscountText" placeholder="e.g. Limited Time Offer: ₹20 only" />
+              <input type="text" id="offerDiscountText" placeholder="e.g. Limited Time Offer: ₹20 only (Regular ₹40)" />
             </div>
           </div>
+
           <div class="form-group" style="margin-bottom: 20px;">
             <label>Features (One per line):</label>
             <textarea id="offerFeatures" rows="4"></textarea>
           </div>
-          <button type="submit" class="save-btn">💾 Save & Publish Offer</button>
+          <button type="submit" class="save-btn">💾 Save & Publish Offer (Updates QR Instantly)</button>
         </form>
       </div>
     </div>
@@ -393,6 +422,10 @@
       // Offers Form
       if (offers) {
         document.getElementById('offerPrice').value = offers.vipPrice || 20;
+        document.getElementById('offerPlanType').value = offers.planType || 'monthly';
+        document.getElementById('offerDurationDays').value = offers.durationDays || 30;
+        document.getElementById('offerVpa').value = offers.vpa || 'sdhinakar6-1@oksbi';
+        document.getElementById('offerVpaName').value = offers.vpaName || 'LIGHT.LTD';
         document.getElementById('offerTitle').value = offers.title || 'VIP Monthly Pass';
         document.getElementById('offerBadge').value = offers.badge || '';
         document.getElementById('offerDiscountText').value = offers.discountText || '';
@@ -424,22 +457,44 @@
       // Users Table
       const uBody = document.getElementById('usersTableBody');
       if (users && users.length > 0) {
-        uBody.innerHTML = users.map(u => `
+        uBody.innerHTML = users.map(u => {
+          let vipBadgeHtml = '';
+          const now = Date.now();
+          if (u.isVip && u.vipExpiresAt) {
+            const expTime = new Date(u.vipExpiresAt).getTime();
+            if (expTime > now) {
+              const daysLeft = Math.ceil((expTime - now) / (1000 * 60 * 60 * 24));
+              vipBadgeHtml = `<span class="badge-pill badge-vip">⭐ VIP ${(u.vipPlanType || 'Active').toUpperCase()} (${daysLeft}d left)</span>`;
+            } else {
+              vipBadgeHtml = `<span class="badge-pill badge-danger">⏳ Expired</span>`;
+            }
+          } else if (u.isVip) {
+            vipBadgeHtml = `<span class="badge-pill badge-vip">⭐ VIP Active</span>`;
+          } else {
+            vipBadgeHtml = `<span class="badge-pill badge-free">Free User</span>`;
+          }
+
+          return `
           <tr>
             <td style="display: flex; align-items: center; gap: 10px;">
               ${u.picture ? `<img src="${u.picture}" style="width: 28px; height: 28px; border-radius: 50%;">` : '👤'}
               <strong>${u.name || 'User'}</strong>
             </td>
             <td>${u.email}</td>
-            <td><span class="badge-pill ${u.isVip ? 'badge-vip' : 'badge-free'}">${u.isVip ? '⭐ VIP' : 'Free'}</span></td>
+            <td>${vipBadgeHtml}</td>
             <td>${new Date(u.createdAt).toLocaleDateString()}</td>
             <td>
-              <button class="action-btn-sm btn-toggle-vip" onclick="toggleUserVip('${u.email}', ${!u.isVip})">
-                ${u.isVip ? 'Revoke VIP' : 'Grant VIP ⭐'}
-              </button>
+              ${u.isVip ? `
+                <button class="action-btn-sm btn-ban" onclick="toggleUserVip('${u.email}', false)">Revoke VIP</button>
+              ` : `
+                <button class="action-btn-sm btn-toggle-vip" onclick="toggleUserVip('${u.email}', true, 1, 'daily')">+1 Day</button>
+                <button class="action-btn-sm btn-toggle-vip" onclick="toggleUserVip('${u.email}', true, 7, 'weekly')">+7 Days</button>
+                <button class="action-btn-sm btn-toggle-vip" onclick="toggleUserVip('${u.email}', true, 30, 'monthly')">+30 Days</button>
+              `}
             </td>
           </tr>
-        `).join('');
+        `;
+        }).join('');
       } else {
         uBody.innerHTML = `<tr><td colspan="5" style="text-align: center; color: var(--text-muted);">No registered users yet.</td></tr>`;
       }
@@ -463,11 +518,24 @@
       }
     }
 
+    // Auto-update duration days when plan type changes
+    document.getElementById('offerPlanType').addEventListener('change', (e) => {
+      const type = e.target.value;
+      const durInput = document.getElementById('offerDurationDays');
+      if (type === 'daily') durInput.value = 1;
+      else if (type === 'weekly') durInput.value = 7;
+      else if (type === 'monthly') durInput.value = 30;
+    });
+
     // Save Offers Handler
     document.getElementById('offersForm').addEventListener('submit', async (e) => {
       e.preventDefault();
       const payload = {
         vipPrice: parseFloat(document.getElementById('offerPrice').value),
+        planType: document.getElementById('offerPlanType').value,
+        durationDays: parseInt(document.getElementById('offerDurationDays').value, 10),
+        vpa: document.getElementById('offerVpa').value.trim(),
+        vpaName: document.getElementById('offerVpaName').value.trim(),
         title: document.getElementById('offerTitle').value,
         badge: document.getElementById('offerBadge').value,
         discountText: document.getElementById('offerDiscountText').value,
@@ -482,7 +550,7 @@
         });
         const d = await res.json();
         if (d.success) {
-          showToast('✅ VIP Offer updated successfully!');
+          showToast(`✅ Plan saved! ₹${payload.vipPrice} (${payload.planType.toUpperCase()}) - VPA: ${payload.vpa}`);
           fetchDashboardData();
         }
       } catch (err) {
@@ -509,20 +577,23 @@
       }
     };
 
-    // Toggle VIP
-    window.toggleUserVip = async function(userId, isVip) {
+    // Toggle VIP with Duration and Plan Type
+    window.toggleUserVip = async function(userId, isVip, durationDays = 30, planType = 'monthly') {
       try {
         const res = await fetch(`/api/admin/users/${encodeURIComponent(userId)}/vip?key=${encodeURIComponent(adminKey)}`, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ isVip })
+          body: JSON.stringify({ isVip, durationDays, planType })
         });
         const d = await res.json();
         if (d.success) {
-          showToast(`VIP updated for ${userId}`);
+          showToast(isVip ? `VIP Granted: ${durationDays} Days (${planType})` : `VIP Revoked for ${userId}`);
           fetchDashboardData();
         }
       } catch (err) {
+        showToast('❌ Failed to update VIP');
+      }
+    };
         showToast('❌ Failed to update VIP');
       }
     };

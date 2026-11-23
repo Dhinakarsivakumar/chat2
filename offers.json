@@ -1,14 +1,18 @@
 {
   "vipPrice": 20,
   "currency": "INR",
+  "planType": "monthly",
+  "durationDays": 30,
   "title": "VIP Monthly Pass",
   "badge": "⚡ SPECIAL 50% OFF",
   "discountText": "Limited Time Offer: ₹20 only (Regular ₹40)",
+  "vpa": "sdhinakar6-1@oksbi",
+  "vpaName": "LIGHT.LTD",
   "features": [
     "Gender Filter: Match exclusively with Female or Male",
     "Age & Common Interests Priority Matchmaking",
     "Zero Wait Time: Priority Queue",
     "Golden Crown VIP Badge"
   ],
-  "updatedAt": "2026-11-22T08:35:00.000Z"
+  "updatedAt": "2026-11-23T02:46:00.000Z"
 }
